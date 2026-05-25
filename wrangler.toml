@@ -1,8 +1,5 @@
-name = "charquiz-game"
+name = "psgame"
 pages_build_output_dir = "."
 compatibility_date = "2024-03-11"
 
-[[kv_namespaces]]
-binding = "KV"
-id = "614791f6165941aa8c82f99f56fbeac4"
-preview_id = "<YOUR_PREVIEW_KV_ID>"
+
