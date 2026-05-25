@@ -1154,6 +1154,13 @@ class SmartAdder {
         // Close modal
         document.getElementById('closeSmartAddModal').addEventListener('click', () => this.closeModal());
         document.getElementById('smartAddModalBackdrop').addEventListener('click', () => this.closeModal());
+
+        // Click photo to view full-size
+        this.photoEl.addEventListener('click', () => {
+            if (this.photoEl.src) {
+                this.app.openImageModal(this.photoEl.src);
+            }
+        });
     }
 
     open() {
