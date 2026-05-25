@@ -7,9 +7,7 @@ const CATEGORIES = ['Slut', 'Twink', 'Shemale'];
 // --- Helpers ---
 function getProxiedUrl(url) {
     if (!url) return '';
-    // If it's already a relative path, local blob, or placeholder, return as is
-    if (url.startsWith('/') || url.startsWith('data:') || url.startsWith('blob:') || url.includes('via.placeholder.com') || url.includes('unsplash.com')) return url;
-    return `/api/proxy?url=${encodeURIComponent(url)}`;
+    return url;
 }
 
 // --- Data Store ---
@@ -23,6 +21,7 @@ class DataStore {
             Shemale: { score: 0, streak: 0 }
         };
         this.customLabels = JSON.parse(localStorage.getItem('charquiz_custom_labels')) || ['milf', 'teen', 'legend'];
+        this.STORAGE_KEY = 'charquiz_characters';
     }
 
     saveLabels() {
@@ -44,38 +43,30 @@ class DataStore {
         this.saveLabels();
     }
 
-    async loadCharacters() {
-        try {
-            const response = await fetch('/api/characters');
-            if (response.ok) {
-                this.characters = await response.json();
-                
-                // If API returns an empty array (no data in KV), load dummy
-                if (Array.isArray(this.characters) && this.characters.length === 0) {
-                    const dummyScript = document.getElementById('dummy-characters');
-                    if (dummyScript) {
-                        try {
-                            this.characters = JSON.parse(dummyScript.textContent);
-                            console.log('Loaded dummy characters (KV is empty)');
-                        } catch (e) {
-                            console.error('Failed to load dummy data fallback:', e);
-                        }
-                    }
+    saveCharacters() {
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.characters));
+    }
+
+    loadCharacters() {
+        const stored = localStorage.getItem(this.STORAGE_KEY);
+        if (stored) {
+            try {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    this.characters = parsed;
+                    return;
                 }
-            } else {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            } catch (e) {
+                console.error('Failed to parse stored characters:', e);
             }
-        } catch (error) {
-            console.error('Error fetching characters:', error);
-            // Fallback to dummy data in index.html if the API is offline
-            const dummyScript = document.getElementById('dummy-characters');
-            if (dummyScript) {
-                try {
-                    this.characters = JSON.parse(dummyScript.textContent);
-                    console.log('Loaded dummy characters as fallback');
-                } catch (e) {
-                    console.error('Failed to load dummy data fallback:', e);
-                }
+        }
+        const dummyScript = document.getElementById('dummy-characters');
+        if (dummyScript) {
+            try {
+                this.characters = JSON.parse(dummyScript.textContent);
+                this.saveCharacters();
+            } catch (e) {
+                console.error('Failed to load dummy data:', e);
             }
         }
     }
@@ -89,63 +80,27 @@ class DataStore {
         return this.characters.filter(c => c.category === category);
     }
 
-    async addCharacter(name, category, photoUrl, labels = []) {
-        const newChar = { name: name.trim(), category, photoUrl: photoUrl.trim(), labels };
-        
-        const response = await fetch('/api/characters', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newChar)
-        });
-        
-        if (!response.ok) {
-            let errorMsg = "Failed to save character to Cloudflare KV";
-            try {
-                const errData = await response.json();
-                if (errData.error) errorMsg += `: ${errData.error}`;
-            } catch (e) {
-                errorMsg += ` (Status: ${response.status})`;
-            }
-            throw new Error(errorMsg);
-        }
-        
-        const result = await response.json();
-        this.characters.push(result.character);
-        return result.character;
+    addCharacter(name, category, photoUrl, labels = []) {
+        const id = 'char-' + name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const newChar = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels };
+        this.characters.push(newChar);
+        this.saveCharacters();
+        return newChar;
     }
 
-    async updateCharacter(id, name, category, photoUrl, labels = []) {
-        const updateData = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels };
-        const response = await fetch('/api/characters', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updateData)
-        });
-
-        if (!response.ok) {
-            let errorMsg = "Failed to update character";
-            try {
-                const errData = await response.json();
-                if (errData.error) errorMsg += `: ${errData.error}`;
-            } catch (e) {
-                errorMsg += ` (Status: ${response.status})`;
-            }
-            throw new Error(errorMsg);
-        }
-
-        const result = await response.json();
+    updateCharacter(id, name, category, photoUrl, labels = []) {
+        const updated = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels };
         const index = this.characters.findIndex(c => c.id === id);
         if (index !== -1) {
-            this.characters[index] = result.character;
+            this.characters[index] = updated;
+            this.saveCharacters();
         }
-        return result.character;
+        return updated;
     }
 
-    async deleteCharacter(id) {
-        const response = await fetch(`/api/characters?id=${id}`, { method: 'DELETE' });
-        
-        if (!response.ok) throw new Error("Failed to delete character from Cloudflare KV");
+    deleteCharacter(id) {
         this.characters = this.characters.filter(c => c.id !== id);
+        this.saveCharacters();
     }
 
     updateHighScore(category, score, streak) {
@@ -179,7 +134,7 @@ class DataStore {
 
     importData(file, onComplete, onError) {
         const reader = new FileReader();
-        reader.onload = async (e) => {
+        reader.onload = (e) => {
             try {
                 const imported = JSON.parse(e.target.result);
                 if (!Array.isArray(imported)) throw new Error("Invalid JSON format");
@@ -189,27 +144,19 @@ class DataStore {
                     if (char.name && char.category && char.photoUrl) {
                         const normalizedName = char.name.trim().toLowerCase();
                         if (!this.characters.some(c => c.name.toLowerCase() === normalizedName)) {
-                            // POST to API
-                            const response = await fetch('/api/characters', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    id: char.id || undefined,
-                                    name: char.name.trim(),
-                                    category: char.category,
-                                    photoUrl: char.photoUrl.trim(),
-                                    labels: Array.isArray(char.labels) ? char.labels : []
-                                })
+                            const id = 'char-' + char.name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                            this.characters.push({
+                                id: char.id || id,
+                                name: char.name.trim(),
+                                category: char.category,
+                                photoUrl: char.photoUrl.trim(),
+                                labels: Array.isArray(char.labels) ? char.labels : []
                             });
-                            
-                            if (response.ok) {
-                                const result = await response.json();
-                                this.characters.push(result.character);
-                                added++;
-                            }
+                            added++;
                         }
                     }
                 }
+                this.saveCharacters();
                 onComplete(added);
             } catch (err) {
                 onError(err);
@@ -442,10 +389,6 @@ class App {
         this.labelsFilter = 'All';
         this.gallerySearch = '';
         
-        this.rewardVideoTimeout = null;
-        this.rewardVideoInterval = null;
-        this.rewardVideoCallback = null;
-        
         this.initDOM();
         this.bindEvents();
         this.applyTheme(this.theme);
@@ -454,7 +397,6 @@ class App {
         // Setup PIN Authentication
         this.initAuth();
         
-        // Start Initialization flow
         this.initData();
     }
 
@@ -488,11 +430,9 @@ class App {
         });
     }
 
-    async initData() {
-        this.showToast('Connecting to KV database... ⏳', 'success');
-        await this.store.loadCharacters();
+    initData() {
+        this.store.loadCharacters();
         this.renderHome();
-        this.showToast('Online Data Sync Complete! ✅', 'success');
     }
 
     initDOM() {
@@ -565,16 +505,12 @@ class App {
             }
         });
 
-        // Sync Data Action
         const syncBtn = document.getElementById('syncBtn');
         if (syncBtn) {
-            syncBtn.addEventListener('click', async () => {
-                const origText = syncBtn.textContent;
-                syncBtn.textContent = 'Syncing...';
-                syncBtn.disabled = true;
-                await this.initData();
-                syncBtn.textContent = origText;
-                syncBtn.disabled = false;
+            syncBtn.addEventListener('click', () => {
+                this.store.loadCharacters();
+                this.renderHome();
+                this.showToast('Data reloaded');
             });
         }
 
@@ -670,11 +606,6 @@ class App {
         document.getElementById('exportDataBtn').addEventListener('click', () => this.store.exportData());
         document.getElementById('importDataInput').addEventListener('change', (e) => this.handleImportData(e));
 
-        const loadPerformersBtn = document.getElementById('loadPerformersBtn');
-        if (loadPerformersBtn) {
-            loadPerformersBtn.addEventListener('click', (e) => this.handleLoadPerformersPack(e));
-        }
-
         // Home Screen
         document.getElementById('homeCategoryGrid').addEventListener('click', (e) => {
             const card = e.target.closest('.category-card');
@@ -732,18 +663,7 @@ class App {
              }
         });
 
-        // Results
         document.getElementById('playAgainBtn').addEventListener('click', () => this.navigate('home'));
-
-        // Reward Video Modal Close
-        const closeRewardBtn = document.getElementById('closeRewardVideoModal');
-        if (closeRewardBtn) {
-            closeRewardBtn.addEventListener('click', () => this.closeRewardVideo());
-        }
-        const rewardBackdrop = document.getElementById('rewardVideoModalBackdrop');
-        if (rewardBackdrop) {
-            rewardBackdrop.addEventListener('click', () => this.closeRewardVideo());
-        }
     }
 
     applyTheme(theme) {
@@ -779,75 +699,8 @@ class App {
         this.openModal('image');
     }
 
-    closeRewardVideo() {
-        if (this.rewardVideoTimeout) clearTimeout(this.rewardVideoTimeout);
-        if (this.rewardVideoInterval) clearInterval(this.rewardVideoInterval);
-        
-        const modal = document.getElementById('rewardVideoModal');
-        const iframe = document.getElementById('rewardVideoIframe');
-        
-        if (modal) modal.classList.add('hidden');
-        if (iframe) iframe.src = '';
-        
-        if (this.rewardVideoCallback) {
-            const cb = this.rewardVideoCallback;
-            this.rewardVideoCallback = null;
-            cb();
-        }
-    }
-
-    async playVideoReward(performerName, onComplete) {
-        this.rewardVideoCallback = onComplete;
-        
-        const modal = document.getElementById('rewardVideoModal');
-        const iframe = document.getElementById('rewardVideoIframe');
-        const timerLabel = document.getElementById('rewardTimer');
-        
-        if (!modal || !iframe || !timerLabel) {
-            onComplete();
-            return;
-        }
-        
-        try {
-            timerLabel.textContent = "Loading reward video... ⏳";
-            modal.classList.remove('hidden');
-            
-            const res = await fetch(`/api/videos?name=${encodeURIComponent(performerName)}`);
-            if (!res.ok) throw new Error("Video not found");
-            const data = await res.json();
-            
-            if (!data.embed_url) throw new Error("No embed URL in response");
-            
-            let embedUrl = data.embed_url;
-            if (embedUrl.includes('?')) {
-                embedUrl += '&autoplay=1';
-            } else {
-                embedUrl += '?autoplay=1';
-            }
-            
-            iframe.src = embedUrl;
-            
-            let secondsLeft = 10;
-            timerLabel.textContent = `Next round in ${secondsLeft}s`;
-            
-            this.rewardVideoInterval = setInterval(() => {
-                secondsLeft--;
-                if (secondsLeft > 0) {
-                    timerLabel.textContent = `Next round in ${secondsLeft}s`;
-                } else {
-                    this.closeRewardVideo();
-                }
-            }, 1000);
-            
-            this.rewardVideoTimeout = setTimeout(() => {
-                this.closeRewardVideo();
-            }, 10500);
-            
-        } catch (e) {
-            console.error("Failed to load video reward:", e);
-            this.showToast("Could not load video, skipping to next round", "error");
-            this.closeRewardVideo();
-        }
+    playVideoReward(performerName, onComplete) {
+        onComplete();
     }
 
     showToast(message, type = 'success') {
@@ -1134,7 +987,7 @@ class App {
 
     // --- Action Handlers ---
 
-    async handleAddCharacter(e) {
+    handleAddCharacter(e) {
         e.preventDefault();
         const name = document.getElementById('addName').value;
         const category = document.getElementById('addCategory').value;
@@ -1142,32 +995,18 @@ class App {
         
         const labels = Array.from(document.querySelectorAll('#addLabelsContainer input[type="checkbox"]:checked')).map(cb => cb.value);
 
-        const submitBtn = e.target.querySelector('button[type="submit"]');
-        const originalText = submitBtn.textContent;
-        
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Saving...';
-        
-        // Remember selection
         if (category) localStorage.setItem('charquiz_last_category', category);
         
-        try {
-            await this.store.addCharacter(name, category, url, labels);
-            this.renderGallery();
-            this.renderHome();
-            this.closeModal('manager');
-            this.showToast('Character saved to KV safely!');
-            e.target.reset();
-            document.getElementById('addUrlPreviewBtn').href = '#';
-        } catch (err) {
-            this.showToast(err.message, 'error');
-        } finally {
-            submitBtn.disabled = false;
-            submitBtn.textContent = originalText;
-        }
+        this.store.addCharacter(name, category, url, labels);
+        this.renderGallery();
+        this.renderHome();
+        this.closeModal('manager');
+        this.showToast('Character saved!');
+        e.target.reset();
+        document.getElementById('addUrlPreviewBtn').href = '#';
     }
 
-    async handleEditCharacter(e) {
+    handleEditCharacter(e) {
         e.preventDefault();
         const id = document.getElementById('editId').value;
         const name = document.getElementById('editName').value;
@@ -1176,43 +1015,24 @@ class App {
         
         const labels = Array.from(document.querySelectorAll('#editLabelsContainer input[type="checkbox"]:checked')).map(cb => cb.value);
 
-        const submitBtn = e.target.querySelector('button[type="submit"]');
-        const originalText = submitBtn.textContent;
-        
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Saving...';
-        
-        // Remember selection
         if (category) localStorage.setItem('charquiz_last_category', category);
         
-        try {
-            await this.store.updateCharacter(id, name, category, url, labels);
-            this.renderGallery();
-            this.renderHome();
-            this.closeModal('edit');
-            this.showToast('Character updated successfully!');
-            e.target.reset();
-            document.getElementById('editUrlPreviewBtn').href = '#';
-        } catch (err) {
-            this.showToast(err.message, 'error');
-        } finally {
-            submitBtn.disabled = false;
-            submitBtn.textContent = originalText;
-        }
+        this.store.updateCharacter(id, name, category, url, labels);
+        this.renderGallery();
+        this.renderHome();
+        this.closeModal('edit');
+        this.showToast('Character updated!');
+        e.target.reset();
+        document.getElementById('editUrlPreviewBtn').href = '#';
     }
 
-    async handleDeleteCharacter(id, e) {
+    handleDeleteCharacter(id, e) {
         if (e) e.stopPropagation();
-        if (confirm('Are you sure you want to permanently delete this character from the KV database?')) {
-            try {
-                this.showToast('Deleting character... ⏳');
-                await this.store.deleteCharacter(id);
-                this.renderGallery();
-                this.renderHome();
-                this.showToast('Character deleted safely from KV.');
-            } catch (err) {
-                this.showToast(err.message, 'error');
-            }
+        if (confirm('Are you sure you want to permanently delete this character?')) {
+            this.store.deleteCharacter(id);
+            this.renderGallery();
+            this.renderHome();
+            this.showToast('Character deleted.');
         }
     }
 
@@ -1220,77 +1040,19 @@ class App {
         const file = e.target.files[0];
         if (!file) return;
         
-        this.showToast('Importing to KV database... please wait.', 'success');
+        this.showToast('Importing data...', 'success');
         
         this.store.importData(file, (count) => {
             this.renderGallery();
             this.renderHome();
-            this.showToast(`Successfully uploaded ${count} new characters to Cloudflare KV!`);
-            e.target.value = ''; // reset
+            this.showToast(`Imported ${count} new characters!`);
+            e.target.value = '';
         }, (err) => {
             this.showToast(`Import failed: ${err.message}`, 'error');
             e.target.value = '';
         });
     }
 
-    async handleLoadPerformersPack(e) {
-        const btn = e.target;
-        const origText = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = 'Resolving... ⏳';
-
-        this.showToast('Fetching performers & resolving images... please wait.', 'success');
-
-        try {
-            const response = await fetch('/api/import-stars');
-            if (!response.ok) throw new Error(`Server returned ${response.status}`);
-            
-            const performers = await response.json();
-            if (!Array.isArray(performers)) throw new Error("Invalid response format");
-
-            let added = 0;
-            for (const char of performers) {
-                if (char.name && char.category && char.photoUrl) {
-                    const normalizedName = char.name.trim().toLowerCase();
-                    if (!this.store.characters.some(c => c.name.toLowerCase() === normalizedName)) {
-                        const res = await fetch('/api/characters', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                name: char.name.trim(),
-                                category: char.category,
-                                photoUrl: char.photoUrl.trim(),
-                                labels: Array.isArray(char.labels) ? char.labels : []
-                            })
-                        });
-                        
-                        if (res.ok) {
-                            const result = await res.json();
-                            this.store.characters.push(result.character);
-                            added++;
-                        }
-                    }
-                }
-            }
-
-            this.renderGallery();
-            this.renderHome();
-            this.closeModal('manager');
-            
-            if (added > 0) {
-                this.showToast(`Imported ${added} new popular performers! 🌟`);
-            } else {
-                this.showToast("All performers in the pack are already in your database!", "success");
-            }
-
-        } catch (err) {
-            console.error("Failed to import stars:", err);
-            this.showToast(`Failed to load pack: ${err.message}`, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = origText;
-        }
-    }
 }
 
 // Initialize App
