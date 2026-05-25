@@ -397,6 +397,15 @@ class App {
         // Setup PIN Authentication
         this.initAuth();
         
+        // Smart Adder (initialized after DOM is ready)
+        this.smartAdder = new SmartAdder(this);
+
+        // Wire Smart Adding button
+        const openSmartAddBtn = document.getElementById('openSmartAddBtn');
+        if (openSmartAddBtn) {
+            openSmartAddBtn.addEventListener('click', () => this.smartAdder.open());
+        }
+
         this.initData();
     }
 
@@ -1055,5 +1064,494 @@ class App {
 
 }
 
+// =================== SMART ADDER ===================
+class SmartAdder {
+    constructor(app) {
+        this.app = app;
+        this.STORAGE_KEY = 'charquiz_smartadd_state';
+
+        // Runtime state
+        this.state = {
+            phase: 'cats',         // 'cats' | 'browsing'
+            category: null,        // pornpics category: 'female' | 'shemale' | 'gay'
+            gameCat: 'Slut',       // game category: 'Slut' | 'Shemale' | 'Twink'
+            queue: [],             // array of {name, slug, avatarUrl} pending review
+            currentPage: 1,
+            hasMore: true,
+            addedCount: 0,         // total added this session
+            current: null,         // current performer being reviewed
+            photos: [],            // photo URLs for current performer
+            photoIdx: 0,           // current photo index
+        };
+
+        this.initDOM();
+        this.bindEvents();
+    }
+
+    initDOM() {
+        this.modal        = document.getElementById('smartAddModal');
+        this.phase1       = document.getElementById('smartAddPhase1');
+        this.phase2       = document.getElementById('smartAddPhase2');
+        this.loadingEl    = document.getElementById('smartAddLoading');
+        this.loadingText  = document.getElementById('smartAddLoadingText');
+        this.performerEl  = document.getElementById('smartAddPerformer');
+        this.emptyEl      = document.getElementById('smartAddEmpty');
+        this.photoEl      = document.getElementById('smartAddPhoto');
+        this.counterEl    = document.getElementById('smartPhotoCounter');
+        this.qualityBadge = document.getElementById('smartPhotoQuality');
+        this.photoOverlay = document.getElementById('smartPhotoLoadingOverlay');
+        this.nameInput    = document.getElementById('smartPerformerName');
+        this.catSelect    = document.getElementById('smartPerformerCategory');
+        this.labelPills   = document.getElementById('smartAddLabelPills');
+        this.statsEl      = document.getElementById('smartAddStats');
+        this.queueInfo    = document.getElementById('smartAddQueueInfo');
+        this.catLabel     = document.getElementById('smartAddCatLabel');
+        this.resumeInfo   = document.getElementById('smartAddResumeInfo');
+        this.subtitle     = document.getElementById('smartAddSubtitle');
+
+        // Click-to-fullscreen zoom overlay
+        this._buildZoomOverlay();
+    }
+
+    _buildZoomOverlay() {
+        // Create a fullscreen zoom overlay for viewing photos at max size
+        const overlay = document.createElement('div');
+        overlay.id = 'smartPhotoZoom';
+        overlay.style.cssText = [
+            'position:fixed;inset:0;z-index:9999',
+            'background:rgba(0,0,0,0.95)',
+            'display:flex;align-items:center;justify-content:center',
+            'cursor:zoom-out;opacity:0;pointer-events:none',
+            'transition:opacity 0.2s'
+        ].join(';');
+        overlay.innerHTML = `<img id="smartZoomImg" style="max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px;box-shadow:0 0 60px rgba(0,0,0,0.8);"><div style="position:absolute;top:1rem;right:1.5rem;color:rgba(255,255,255,0.6);font-size:1.5rem;cursor:pointer;">✕</div>`;
+        document.body.appendChild(overlay);
+        this.zoomOverlay = overlay;
+        this.zoomImg = document.getElementById('smartZoomImg');
+
+        // Click photo to zoom
+        this.photoEl.addEventListener('click', () => {
+            if (!this.photoEl.src) return;
+            this.zoomImg.src = this.photoEl.src;
+            this.zoomOverlay.style.opacity = '1';
+            this.zoomOverlay.style.pointerEvents = 'all';
+        });
+        overlay.addEventListener('click', () => {
+            this.zoomOverlay.style.opacity = '0';
+            this.zoomOverlay.style.pointerEvents = 'none';
+        });
+    }
+
+    bindEvents() {
+        // Category buttons
+        document.querySelectorAll('.smart-cat-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.startCategory(btn.dataset.cat, btn.dataset.gameCat);
+            });
+        });
+
+        // Resume saved session
+        document.getElementById('smartAddResumeBtn').addEventListener('click', () => {
+            this.resumeSession();
+        });
+
+        // Back to categories
+        document.getElementById('smartAddBackToCats').addEventListener('click', () => {
+            this.saveSession();
+            this.showPhase1();
+        });
+
+        // Photo navigation
+        document.getElementById('smartPhotoPrev').addEventListener('click', () => this.prevPhoto());
+        document.getElementById('smartPhotoNext').addEventListener('click', () => this.nextPhoto());
+
+        // Keyboard navigation when modal is open
+        document.addEventListener('keydown', (e) => {
+            if (this.modal.classList.contains('hidden')) return;
+            if (this.state.phase !== 'browsing') return;
+            if (e.key === 'ArrowLeft')  this.prevPhoto();
+            if (e.key === 'ArrowRight') this.nextPhoto();
+            if (e.key === 'Enter')      document.getElementById('smartSaveAddBtn').click();
+            if (e.key === 's' || e.key === 'S') document.getElementById('smartSkipBtn').click();
+        });
+
+        // Add & Next
+        document.getElementById('smartSaveAddBtn').addEventListener('click', () => this.addCurrentPerformer());
+
+        // Skip
+        document.getElementById('smartSkipBtn').addEventListener('click', () => this.skipCurrentPerformer());
+
+        // Load more performers
+        document.getElementById('smartLoadMoreBtn').addEventListener('click', () => this.loadMorePerformers());
+
+        // Close modal
+        document.getElementById('closeSmartAddModal').addEventListener('click', () => this.closeModal());
+        document.getElementById('smartAddModalBackdrop').addEventListener('click', () => this.closeModal());
+    }
+
+    open() {
+        this.modal.classList.remove('hidden');
+        this.checkSavedSession();
+        this.showPhase1();
+    }
+
+    closeModal() {
+        this.saveSession();
+        this.modal.classList.add('hidden');
+    }
+
+    // ---- Session Persistence ----
+    saveSession() {
+        if (!this.state.category) return;
+        try {
+            localStorage.setItem(this.STORAGE_KEY, JSON.stringify({
+                category: this.state.category,
+                gameCat: this.state.gameCat,
+                queue: this.state.queue,
+                currentPage: this.state.currentPage,
+                hasMore: this.state.hasMore,
+                addedCount: this.state.addedCount
+            }));
+        } catch (e) {}
+    }
+
+    loadSession() {
+        try {
+            const raw = localStorage.getItem(this.STORAGE_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+
+    clearSession() {
+        localStorage.removeItem(this.STORAGE_KEY);
+    }
+
+    checkSavedSession() {
+        const saved = this.loadSession();
+        if (saved && saved.queue && saved.queue.length > 0) {
+            this.resumeInfo.classList.remove('hidden');
+        } else {
+            this.resumeInfo.classList.add('hidden');
+        }
+    }
+
+    resumeSession() {
+        const saved = this.loadSession();
+        if (!saved) return;
+        this.state.category    = saved.category;
+        this.state.gameCat     = saved.gameCat;
+        this.state.queue       = saved.queue || [];
+        this.state.currentPage = saved.currentPage || 1;
+        this.state.hasMore     = saved.hasMore !== false;
+        this.state.addedCount  = saved.addedCount || 0;
+        this.state.phase       = 'browsing';
+
+        const CAT_LABELS = { female: 'Female Pornstars', shemale: 'Shemale Stars', gay: 'Gay/Twink Stars' };
+        this.catLabel.textContent = CAT_LABELS[this.state.category] || 'Performers';
+        this.subtitle.textContent = `Resuming session • ${this.state.addedCount} added`;
+
+        this.showPhase2();
+        this.loadNextPerformer();
+    }
+
+    // ---- Phase Management ----
+    showPhase1() {
+        this.state.phase = 'cats';
+        this.phase1.classList.remove('hidden');
+        this.phase2.classList.add('hidden');
+        this.checkSavedSession();
+    }
+
+    showPhase2() {
+        this.state.phase = 'browsing';
+        this.phase1.classList.add('hidden');
+        this.phase2.classList.remove('hidden');
+        this.showLoading('Loading performers...');
+    }
+
+    showLoading(msg = 'Loading...') {
+        this.loadingText.textContent = msg;
+        this.loadingEl.classList.remove('hidden');
+        this.loadingEl.style.display = 'flex';
+        this.performerEl.classList.add('hidden');
+        this.emptyEl.classList.add('hidden');
+    }
+
+    showPerformer() {
+        this.loadingEl.style.display = 'none';
+        this.loadingEl.classList.add('hidden');
+        this.emptyEl.classList.add('hidden');
+        this.performerEl.classList.remove('hidden');
+        this.performerEl.style.display = 'flex';
+    }
+
+    showEmpty() {
+        this.loadingEl.style.display = 'none';
+        this.loadingEl.classList.add('hidden');
+        this.performerEl.classList.add('hidden');
+        this.emptyEl.classList.remove('hidden');
+    }
+
+    updateStats() {
+        this.statsEl.textContent = `✅ ${this.state.addedCount} added`;
+        this.queueInfo.textContent = `${this.state.queue.length} in queue`;
+    }
+
+    // ---- Category Start ----
+    async startCategory(pornpicsCat, gameCat) {
+        this.clearSession();
+        this.state.category    = pornpicsCat;
+        this.state.gameCat     = gameCat;
+        this.state.queue       = [];
+        this.state.currentPage = 1;
+        this.state.hasMore     = true;
+        this.state.addedCount  = 0;
+        this.state.current     = null;
+        this.state.photos      = [];
+        this.state.photoIdx    = 0;
+
+        const CAT_LABELS = { female: 'Female Pornstars', shemale: 'Shemale Stars', gay: 'Gay/Twink Stars' };
+        this.catLabel.textContent = CAT_LABELS[pornpicsCat] || 'Performers';
+        this.subtitle.textContent = `Browsing ${CAT_LABELS[pornpicsCat]}`;
+
+        this.showPhase2();
+        await this.fetchPerformers();
+        this.loadNextPerformer();
+    }
+
+    // ---- Fetch Performers from API ----
+    async fetchPerformers() {
+        this.showLoading(`Loading page ${this.state.currentPage}...`);
+        try {
+            const res = await fetch(`/api/browse-stars?category=${this.state.category}&page=${this.state.currentPage}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            if (data.performers && data.performers.length > 0) {
+                // Filter out already-added names
+                const existingNames = new Set(
+                    this.app.store.getCharacters().map(c => c.name.toLowerCase().trim())
+                );
+                const fresh = data.performers.filter(p =>
+                    !existingNames.has(p.name.toLowerCase().trim())
+                );
+                this.state.queue.push(...fresh);
+            }
+
+            this.state.hasMore = !!data.hasMore;
+            this.state.currentPage = data.nextPage || this.state.currentPage + 1;
+
+            this.updateStats();
+        } catch (err) {
+            this.app.showToast(`Failed to load performers: ${err.message}`, 'error');
+        }
+    }
+
+    // ---- Load Next Performer ----
+    async loadNextPerformer() {
+        if (this.state.queue.length === 0) {
+            if (this.state.hasMore) {
+                await this.fetchPerformers();
+                if (this.state.queue.length === 0) {
+                    this.showEmpty();
+                    return;
+                }
+            } else {
+                this.showEmpty();
+                return;
+            }
+        }
+
+        this.state.current  = this.state.queue.shift();
+        this.state.photos   = [];
+        this.state.photoIdx = 0;
+
+        this.updateStats();
+        this.saveSession();
+        this.renderPerformer();
+        this.fetchPerformerPhotos(this.state.current.slug);
+    }
+
+    // ---- Render Current Performer (with avatar immediately) ----
+    renderPerformer() {
+        const p = this.state.current;
+        this.nameInput.value = p.name;
+        this.catSelect.value = this.state.gameCat;
+
+        // Render labels
+        this.renderLabelPills([]);
+
+        // Show avatar immediately while photos load
+        const initialPhoto = p.avatarUrl || '';
+        this.state.photos = initialPhoto ? [initialPhoto] : [];
+        this.state.photoIdx = 0;
+        this.showCurrentPhoto();
+
+        this.showPerformer();
+    }
+
+    // ---- Fetch All Photos for Current Performer ----
+    async fetchPerformerPhotos(slug) {
+        this.photoOverlay.classList.remove('hidden');
+        try {
+            const res = await fetch(`/api/star-photos?slug=${encodeURIComponent(slug)}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            if (data.photos && data.photos.length > 0) {
+                this.state.photos = data.photos;
+                this.state.photoIdx = 0;
+                // If API found a better name, update it
+                if (data.name && data.name !== slug) {
+                    this.nameInput.value = data.name;
+                    this.state.current.name = data.name;
+                }
+                this.showCurrentPhoto();
+            }
+        } catch (e) {
+            // Stay with avatar
+        } finally {
+            this.photoOverlay.classList.add('hidden');
+        }
+    }
+
+    // ---- Photo Navigation ----
+    showCurrentPhoto() {
+        const photos = this.state.photos;
+        if (photos.length === 0) {
+            this.photoEl.src = '';
+            this.counterEl.textContent = '0 / 0';
+            return;
+        }
+
+        const url = photos[this.state.photoIdx];
+        this.photoEl.style.opacity = '0.5';
+        this.photoEl.src = url;
+
+        this.photoEl.onload = () => {
+            this.photoEl.style.opacity = '1';
+            // Show HD badge if this is a 1280 URL
+            if (this.qualityBadge) {
+                const isHD = url.includes('/1280/');
+                this.qualityBadge.textContent = isHD ? 'HD' : 'SD';
+                this.qualityBadge.style.background = isHD
+                    ? 'rgba(99,102,241,0.85)'
+                    : 'rgba(100,100,100,0.75)';
+            }
+        };
+
+        this.photoEl.onerror = () => {
+            const failedUrl = this.photoEl.src;
+
+            // If HD (/1280/) failed → try the matching /460/ version
+            if (failedUrl.includes('/1280/')) {
+                const fallback = failedUrl.replace('/1280/', '/460/');
+                // Replace current URL in array with fallback
+                this.state.photos[this.state.photoIdx] = fallback;
+                this.photoEl.src = fallback;
+                if (this.qualityBadge) {
+                    this.qualityBadge.textContent = 'SD';
+                    this.qualityBadge.style.background = 'rgba(100,100,100,0.75)';
+                }
+                return;
+            }
+
+            // /460/ also failed → remove and try next
+            this.state.photos.splice(this.state.photoIdx, 1);
+            if (this.state.photos.length > 0) {
+                this.state.photoIdx = Math.min(this.state.photoIdx, this.state.photos.length - 1);
+                this.showCurrentPhoto();
+            }
+        };
+
+        // Visible count shows all unique photos (HD + SD pairs count as 1 visible)
+        const visibleTotal = photos.filter(u => u.includes('/1280/') || !photos.some(other => other !== u && other.replace('/1280/', '/460/') === u)).length;
+        const visibleIdx = Math.floor(this.state.photoIdx / 1) + 1;
+        this.counterEl.textContent = `${this.state.photoIdx + 1} / ${photos.length}`;
+
+        // Arrow visibility
+        const hasMult = photos.length > 1;
+        document.getElementById('smartPhotoPrev').style.opacity = hasMult ? '0.8' : '0.2';
+        document.getElementById('smartPhotoNext').style.opacity = hasMult ? '0.8' : '0.2';
+    }
+
+    prevPhoto() {
+        if (this.state.photos.length <= 1) return;
+        this.state.photoIdx = (this.state.photoIdx - 1 + this.state.photos.length) % this.state.photos.length;
+        this.showCurrentPhoto();
+    }
+
+    nextPhoto() {
+        if (this.state.photos.length <= 1) return;
+        this.state.photoIdx = (this.state.photoIdx + 1) % this.state.photos.length;
+        this.showCurrentPhoto();
+    }
+
+    // ---- Label Pills ----
+    renderLabelPills(activeLabels) {
+        this.labelPills.innerHTML = '';
+        const allLabels = this.app.store.customLabels;
+        if (allLabels.length === 0) {
+            this.labelPills.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted)">No labels</span>';
+            return;
+        }
+        allLabels.forEach(label => {
+            const isChecked = activeLabels.includes(label);
+            const el = document.createElement('label');
+            el.className = 'label-cb-pill';
+            el.innerHTML = `<input type="checkbox" value="${label}" ${isChecked ? 'checked' : ''} style="display:none;"><span>${label}</span>`;
+            this.labelPills.appendChild(el);
+        });
+    }
+
+    // ---- Add Current Performer ----
+    async addCurrentPerformer() {
+        const name     = this.nameInput.value.trim();
+        const category = this.catSelect.value;
+        const photoUrl = this.state.photos[this.state.photoIdx] || '';
+        const labels   = Array.from(this.labelPills.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+
+        if (!name || !photoUrl) {
+            this.app.showToast('Name and photo are required', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('smartSaveAddBtn');
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+
+        try {
+            await this.app.store.addCharacter(name, category, photoUrl, labels);
+            this.state.addedCount++;
+            this.app.showToast(`✅ ${name} added!`);
+            this.app.renderGallery();
+            this.app.renderHome();
+        } catch (err) {
+            this.app.showToast(`Failed: ${err.message}`, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Add & Next ✅';
+        }
+
+        this.loadNextPerformer();
+    }
+
+    // ---- Skip Current Performer ----
+    skipCurrentPerformer() {
+        this.loadNextPerformer();
+    }
+
+    // ---- Load More from Next Page ----
+    async loadMorePerformers() {
+        if (!this.state.hasMore) {
+            this.app.showToast('No more pages available', 'error');
+            return;
+        }
+        await this.fetchPerformers();
+        this.loadNextPerformer();
+    }
+}
+
 // Initialize App
 const app = new App();
+

@@ -900,3 +900,53 @@ input:focus, select:focus {
     .filter-pills { flex-wrap: wrap; justify-content: center; }
     .game-area { flex-direction: column; gap: 2rem; }
 }
+
+/* =================== SMART ADDING STYLES =================== */
+.smart-cat-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 1.5rem 1rem;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-glass);
+    border-radius: 16px;
+    cursor: pointer;
+    color: var(--text-main);
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(8px);
+}
+.smart-cat-btn:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.5);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.2);
+}
+.smart-cat-btn strong {
+    font-size: 1rem;
+    font-weight: 700;
+}
+.smart-cat-btn span:last-child {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+#smartPhotoPrev:hover,
+#smartPhotoNext:hover {
+    opacity: 1 !important;
+    background: rgba(0,0,0,0.85) !important;
+}
+.smart-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(99, 102, 241, 0.2);
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
