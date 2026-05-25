@@ -8,7 +8,8 @@ export async function onRequest(context) {
 
     const profileUrl = `https://www.pornpics.com/pornstars/${slug}/`;
 
-    // Avatar CDN: /models/<first_letter>/<slug_underscored>.jpg
+    // Avatar CDN pattern: /models/<first_letter>/<full_name>.jpg
+    // e.g. angela-white → /models/a/angela_white.jpg
     const cdnName     = slug.replace(/-/g, '_');
     const firstLetter = cdnName[0];
     const avatarUrl   = `https://cdni.pornpics.com/models/${firstLetter}/${cdnName}.jpg`;
@@ -33,47 +34,30 @@ export async function onRequest(context) {
 
         function add(u) {
             const clean = u.trim();
-            if (clean && !seen.has(clean) && clean.endsWith('.jpg')) {
+            if (clean && !seen.has(clean)) {
                 seen.add(clean);
                 photos.push(clean);
             }
         }
 
-        // 1. Model portrait avatar (always first)
+        // 1. Model portrait avatar — check if it's referenced in HTML
         if (html.includes(cdnName)) {
             add(avatarUrl);
         }
 
-        // 2. Extract ALL cdni.pornpics.com URLs from the HTML
-        //    pornpics uses SINGLE QUOTES: data-src='...'
-        //    So we scan for raw URLs, not attribute patterns
-        const cdniRegex = /https:\/\/cdni\.pornpics\.com\/[^\s"'<>\)\]]+\.jpg/gi;
+        // 2. All cdni.pornpics.com URLs extracted from HTML
+        //    pornpics uses SINGLE QUOTES: data-src='https://cdni...'
+        //    We match both single and double quotes.
+        const cdniRegex = /https:\/\/cdni\.pornpics\.com\/[^\s"'<>]+\.jpg/gi;
         let m;
         while ((m = cdniRegex.exec(html)) !== null) {
-            const rawUrl = m[0];
-
-            /**
-             * Quality upgrade strategy:
-             * pornpics CDN uses /460/ for profile thumbnails.
-             * Try to get /1280/ (full HD) first — the app will fallback to /460/ if 1280 fails.
-             * URL pattern: cdni.pornpics.com/{size}/{partition}/{id1}/{id2}/{id2}_{seq}_{hash}.jpg
-             */
-            if (rawUrl.includes('/460/')) {
-                // Add HD version first (the app will try this first)
-                const hdUrl = rawUrl.replace('/460/', '/1280/');
-                add(hdUrl);
-                // Also add the original 460 as a fallback reference
-                // (SmartAdder.showCurrentPhoto handles fallback via onerror)
-                add(rawUrl);
-            } else {
-                add(rawUrl);
-            }
+            add(m[0]);
         }
 
-        // Last resort: at least show the avatar
+        // Last resort
         if (photos.length === 0) add(avatarUrl);
 
-        // Extract real performer name from <h1> or <title>
+        // Extract real name from page <h1> or <title>
         let name = slugToName(slug);
         const h1Match    = html.match(/<h1[^>]*>([^<]{2,60})<\/h1>/i);
         const titleMatch = html.match(/<title>([^|<\-–]{2,60})/i);
@@ -85,7 +69,7 @@ export async function onRequest(context) {
             if (n.length > 1 && n.length < 60) name = n;
         }
 
-        return jsonResponse({ name, slug, photos: photos.slice(0, 50) });
+        return jsonResponse({ name, slug, photos: photos.slice(0, 30) });
 
     } catch (err) {
         return jsonResponse({ name: slugToName(slug), slug, photos: [avatarUrl], error: err.message });

@@ -256,7 +256,7 @@
     <!-- Smart Adding Modal -->
     <div id="smartAddModal" class="modal hidden">
         <div class="modal-backdrop" id="smartAddModalBackdrop"></div>
-        <div class="modal-content glass-card" style="max-width: 900px; width: 95vw; padding: 0; overflow: hidden; border-radius: 20px; max-height: 95vh; display: flex; flex-direction: column;">
+        <div class="modal-content glass-card" style="max-width: 560px; padding: 0; overflow: hidden; border-radius: 20px;">
 
             <!-- Header -->
             <div style="display: flex; align-items: center; justify-content: space-between; padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border-glass); background: rgba(99,102,241,0.1);">
@@ -320,16 +320,14 @@
                 <div id="smartAddPerformer" class="hidden" style="display: flex; flex-direction: column;">
 
                     <!-- Photo Browser Area -->
-                    <div style="position: relative; background: #111; overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 420px; max-height: 70vh;">
+                    <div style="position: relative; background: #000; aspect-ratio: 4/3; overflow: hidden;">
                         <img id="smartAddPhoto" src="" alt="Performer"
-                            style="max-width: 100%; max-height: 70vh; width: auto; height: auto; object-fit: contain; display: block; transition: opacity 0.25s; cursor: zoom-in;">
+                            style="width: 100%; height: 100%; object-fit: cover; transition: opacity 0.2s;">
                         <!-- Nav Arrows -->
-                        <button id="smartPhotoPrev" style="position:absolute;left:0;top:0;height:100%;width:15%;background:linear-gradient(to right,rgba(0,0,0,0.55),transparent);border:none;color:#fff;font-size:2.5rem;cursor:pointer;opacity:0.8;transition:opacity 0.2s;display:flex;align-items:center;justify-content:flex-start;padding-left:0.5rem;" title="Previous photo">&#8249;</button>
-                        <button id="smartPhotoNext" style="position:absolute;right:0;top:0;height:100%;width:15%;background:linear-gradient(to left,rgba(0,0,0,0.55),transparent);border:none;color:#fff;font-size:2.5rem;cursor:pointer;opacity:0.8;transition:opacity 0.2s;display:flex;align-items:center;justify-content:flex-end;padding-right:0.5rem;" title="Next photo">&#8250;</button>
+                        <button id="smartPhotoPrev" style="position:absolute;left:0;top:50%;transform:translateY(-50%);background:rgba(0,0,0,0.6);border:none;color:#fff;font-size:2rem;padding:0.75rem 1rem;cursor:pointer;height:100%;opacity:0.7;transition:opacity 0.2s;" title="Previous photo">&#8249;</button>
+                        <button id="smartPhotoNext" style="position:absolute;right:0;top:50%;transform:translateY(-50%);background:rgba(0,0,0,0.6);border:none;color:#fff;font-size:2rem;padding:0.75rem 1rem;cursor:pointer;height:100%;opacity:0.7;transition:opacity 0.2s;" title="Next photo">&#8250;</button>
                         <!-- Photo counter -->
-                        <div id="smartPhotoCounter" style="position:absolute;bottom:0.75rem;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;font-size:0.8rem;padding:0.3rem 1rem;border-radius:999px;backdrop-filter:blur(6px);letter-spacing:0.05em;">1 / 1</div>
-                        <!-- Quality badge -->
-                        <div id="smartPhotoQuality" style="position:absolute;top:0.75rem;right:0.75rem;background:rgba(99,102,241,0.85);color:#fff;font-size:0.7rem;padding:0.2rem 0.6rem;border-radius:999px;backdrop-filter:blur(4px);">HD</div>
+                        <div id="smartPhotoCounter" style="position:absolute;bottom:0.75rem;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#fff;font-size:0.75rem;padding:0.25rem 0.75rem;border-radius:999px;backdrop-filter:blur(4px);">1 / 1</div>
                         <!-- Loading overlay for photo -->
                         <div id="smartPhotoLoadingOverlay" class="hidden" style="position:absolute;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;">
                             <div class="smart-spinner"></div>
@@ -337,10 +335,10 @@
                     </div>
 
                     <!-- Performer Info -->
-                    <div style="padding: 1rem 1.5rem; background: var(--bg-glass); flex-shrink: 0;">
-                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <div style="padding: 1.25rem 1.5rem;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
                             <input type="text" id="smartPerformerName"
-                                style="flex: 1; font-size: 1.15rem; font-weight: 700; background: transparent; border: none; border-bottom: 2px solid var(--border-glass); padding: 0.25rem 0; color: var(--text-main); outline: none;"
+                                style="flex: 1; font-size: 1.1rem; font-weight: 700; background: transparent; border: none; border-bottom: 2px solid var(--border-glass); padding: 0.25rem 0; color: var(--text-main); outline: none;"
                                 placeholder="Performer Name">
                             <select id="smartPerformerCategory"
                                 style="background: var(--bg-glass); border: 1px solid var(--border-glass); color: var(--text-main); padding: 0.4rem 0.75rem; border-radius: 8px; font-family: inherit; font-size: 0.9rem;">
@@ -350,31 +348,13 @@
                             </select>
                         </div>
 
-                        <div style="display: flex; align-items: center; gap: 1.5rem;">
-                            <div style="flex: 1;">
-                                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.4rem;">Labels</div>
-                                <div id="smartAddLabelPills" class="labels-multi-select" style="display: flex; flex-wrap: wrap; gap: 0.4rem;"></div>
-                            </div>
-                            <!-- Actions -->
-                            <div style="display: flex; flex-direction: column; gap: 0.5rem; min-width: 160px;">
-                                <button id="smartSaveAddBtn" style="
-                                    padding: 0.75rem 1.25rem;
-                                    background: linear-gradient(135deg, #10b981, #059669);
-                                    color: #fff; border: none; border-radius: 12px;
-                                    font-size: 1rem; font-weight: 700;
-                                    cursor: pointer; font-family: inherit;
-                                    transition: transform 0.15s, box-shadow 0.15s;
-                                    box-shadow: 0 4px 16px rgba(16,185,129,0.4);
-                                ">✅ Add This Photo</button>
-                                <button id="smartSkipBtn" style="
-                                    padding: 0.5rem 1rem;
-                                    background: transparent;
-                                    color: var(--text-muted); border: 1px solid var(--border-glass);
-                                    border-radius: 10px; font-size: 0.85rem;
-                                    cursor: pointer; font-family: inherit;
-                                    transition: all 0.15s;
-                                ">Skip ⏭️</button>
-                            </div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">Labels</div>
+                        <div id="smartAddLabelPills" class="labels-multi-select" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem;"></div>
+
+                        <!-- Actions -->
+                        <div style="display: flex; gap: 0.75rem;">
+                            <button id="smartSkipBtn" class="btn-secondary" style="flex: 1;">Skip ⏭️</button>
+                            <button id="smartSaveAddBtn" class="btn-primary" style="flex: 2;">Add &amp; Next ✅</button>
                         </div>
                     </div>
                 </div>

@@ -1098,7 +1098,6 @@ class SmartAdder {
         this.emptyEl      = document.getElementById('smartAddEmpty');
         this.photoEl      = document.getElementById('smartAddPhoto');
         this.counterEl    = document.getElementById('smartPhotoCounter');
-        this.qualityBadge = document.getElementById('smartPhotoQuality');
         this.photoOverlay = document.getElementById('smartPhotoLoadingOverlay');
         this.nameInput    = document.getElementById('smartPerformerName');
         this.catSelect    = document.getElementById('smartPerformerCategory');
@@ -1108,38 +1107,6 @@ class SmartAdder {
         this.catLabel     = document.getElementById('smartAddCatLabel');
         this.resumeInfo   = document.getElementById('smartAddResumeInfo');
         this.subtitle     = document.getElementById('smartAddSubtitle');
-
-        // Click-to-fullscreen zoom overlay
-        this._buildZoomOverlay();
-    }
-
-    _buildZoomOverlay() {
-        // Create a fullscreen zoom overlay for viewing photos at max size
-        const overlay = document.createElement('div');
-        overlay.id = 'smartPhotoZoom';
-        overlay.style.cssText = [
-            'position:fixed;inset:0;z-index:9999',
-            'background:rgba(0,0,0,0.95)',
-            'display:flex;align-items:center;justify-content:center',
-            'cursor:zoom-out;opacity:0;pointer-events:none',
-            'transition:opacity 0.2s'
-        ].join(';');
-        overlay.innerHTML = `<img id="smartZoomImg" style="max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px;box-shadow:0 0 60px rgba(0,0,0,0.8);"><div style="position:absolute;top:1rem;right:1.5rem;color:rgba(255,255,255,0.6);font-size:1.5rem;cursor:pointer;">✕</div>`;
-        document.body.appendChild(overlay);
-        this.zoomOverlay = overlay;
-        this.zoomImg = document.getElementById('smartZoomImg');
-
-        // Click photo to zoom
-        this.photoEl.addEventListener('click', () => {
-            if (!this.photoEl.src) return;
-            this.zoomImg.src = this.photoEl.src;
-            this.zoomOverlay.style.opacity = '1';
-            this.zoomOverlay.style.pointerEvents = 'all';
-        });
-        overlay.addEventListener('click', () => {
-            this.zoomOverlay.style.opacity = '0';
-            this.zoomOverlay.style.pointerEvents = 'none';
-        });
     }
 
     bindEvents() {
@@ -1425,54 +1392,22 @@ class SmartAdder {
         }
 
         const url = photos[this.state.photoIdx];
-        this.photoEl.style.opacity = '0.5';
+        this.photoEl.style.opacity = '0.6';
         this.photoEl.src = url;
-
-        this.photoEl.onload = () => {
-            this.photoEl.style.opacity = '1';
-            // Show HD badge if this is a 1280 URL
-            if (this.qualityBadge) {
-                const isHD = url.includes('/1280/');
-                this.qualityBadge.textContent = isHD ? 'HD' : 'SD';
-                this.qualityBadge.style.background = isHD
-                    ? 'rgba(99,102,241,0.85)'
-                    : 'rgba(100,100,100,0.75)';
-            }
-        };
-
+        this.photoEl.onload = () => { this.photoEl.style.opacity = '1'; };
         this.photoEl.onerror = () => {
-            const failedUrl = this.photoEl.src;
-
-            // If HD (/1280/) failed → try the matching /460/ version
-            if (failedUrl.includes('/1280/')) {
-                const fallback = failedUrl.replace('/1280/', '/460/');
-                // Replace current URL in array with fallback
-                this.state.photos[this.state.photoIdx] = fallback;
-                this.photoEl.src = fallback;
-                if (this.qualityBadge) {
-                    this.qualityBadge.textContent = 'SD';
-                    this.qualityBadge.style.background = 'rgba(100,100,100,0.75)';
-                }
-                return;
-            }
-
-            // /460/ also failed → remove and try next
+            // Remove broken photo and try next
             this.state.photos.splice(this.state.photoIdx, 1);
             if (this.state.photos.length > 0) {
                 this.state.photoIdx = Math.min(this.state.photoIdx, this.state.photos.length - 1);
                 this.showCurrentPhoto();
             }
         };
-
-        // Visible count shows all unique photos (HD + SD pairs count as 1 visible)
-        const visibleTotal = photos.filter(u => u.includes('/1280/') || !photos.some(other => other !== u && other.replace('/1280/', '/460/') === u)).length;
-        const visibleIdx = Math.floor(this.state.photoIdx / 1) + 1;
         this.counterEl.textContent = `${this.state.photoIdx + 1} / ${photos.length}`;
 
-        // Arrow visibility
-        const hasMult = photos.length > 1;
-        document.getElementById('smartPhotoPrev').style.opacity = hasMult ? '0.8' : '0.2';
-        document.getElementById('smartPhotoNext').style.opacity = hasMult ? '0.8' : '0.2';
+        // Update arrow visibility
+        document.getElementById('smartPhotoPrev').style.opacity = photos.length > 1 ? '0.7' : '0.2';
+        document.getElementById('smartPhotoNext').style.opacity = photos.length > 1 ? '0.7' : '0.2';
     }
 
     prevPhoto() {
