@@ -28,7 +28,7 @@ export async function onRequest(context) {
             // --- Bug #6 Fix: verify avatar CDN URL actually works before returning ---
             const verifiedAvatar = await verifyUrl(avatarUrl, HEADERS);
             const fallback = verifiedAvatar ? [avatarUrl] : [];
-            return jsonResponse({ name: slugToName(slug), slug, photos: fallback });
+            return jsonResponse({ name: cleanPerformerName(slugToName(slug)), slug, photos: fallback });
         }
 
         const html = await res.text();
@@ -37,10 +37,8 @@ export async function onRequest(context) {
 
         function add(u) {
             const clean = u.trim();
-            // --- Bug #7 Fix: deduplicate by "base path" — strip resolution/size prefix ---
-            // pornpics CDN uses paths like /1920/ab/cd/..., /640/ab/cd/..., /320/ab/cd/...
-            // Normalize by stripping the leading numeric segment so variants of same image collapse
-            const normalized = clean.replace(/\/\d{2,4}\//g, '/SIZE/');
+            // Deduplicate by base path (collapsing different size variants)
+            const normalized = clean.replace(/(https:\/\/cdni\.pornpics\.com\/)\d{2,4}\//i, '$1SIZE/');
             if (clean && !seen.has(normalized)) {
                 seen.add(normalized);
                 photos.push(clean);
@@ -81,10 +79,10 @@ export async function onRequest(context) {
 
         // Bug #12 Fix: increased cap to 50 and expose totalFound to client
         const finalPhotos = photos.slice(0, 50);
-        return jsonResponse({ name, slug, photos: finalPhotos, totalFound: photos.length });
+        return jsonResponse({ name: cleanPerformerName(name), slug, photos: finalPhotos, totalFound: photos.length });
 
     } catch (err) {
-        return jsonResponse({ name: slugToName(slug), slug, photos: [], error: err.message });
+        return jsonResponse({ name: cleanPerformerName(slugToName(slug)), slug, photos: [], error: err.message });
     }
 }
 
@@ -99,6 +97,16 @@ async function verifyUrl(url, headers) {
     } catch {
         return false;
     }
+}
+
+function cleanPerformerName(name) {
+    if (!name) return '';
+    return name
+        .replace(/\b(?:nude|pics|photos|videos|pic|photo|video|bio|profile|pornstar|porn\s+star)\b/gi, '')
+        .replace(/&/g, '')
+        .replace(/,/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 function slugToName(slug) {

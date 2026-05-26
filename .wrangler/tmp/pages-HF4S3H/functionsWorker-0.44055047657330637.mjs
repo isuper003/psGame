@@ -13,9 +13,9 @@ async function onRequest(context) {
     "Referer": "https://www.pornpics.com/"
   };
   const CATEGORY_URLS = {
-    female: /* @__PURE__ */ __name((p) => p === 1 ? "https://www.pornpics.com/pornstars/?sort=popular" : `https://www.pornpics.com/pornstars/?sort=popular&page=${p}`, "female"),
-    shemale: /* @__PURE__ */ __name((p) => p === 1 ? "https://www.pornpics.com/pornstars/shemale/?sort=popular" : `https://www.pornpics.com/pornstars/shemale/?sort=popular&page=${p}`, "shemale"),
-    gay: /* @__PURE__ */ __name((p) => p === 1 ? "https://www.pornpics.com/pornstars/gay/?sort=popular" : `https://www.pornpics.com/pornstars/gay/?sort=popular&page=${p}`, "gay")
+    female: /* @__PURE__ */ __name((p) => p === 1 ? "https://www.pornpics.com/pornstars/?sort=popular" : `https://www.pornpics.com/pornstars/${p}/?sort=popular`, "female"),
+    shemale: /* @__PURE__ */ __name((p) => p === 1 ? "https://www.pornpics.com/pornstars/shemale/?sort=popular" : `https://www.pornpics.com/pornstars/shemale/${p}/?sort=popular`, "shemale"),
+    gay: /* @__PURE__ */ __name((p) => p === 1 ? "https://www.pornpics.com/pornstars/gay/?sort=popular" : `https://www.pornpics.com/pornstars/gay/${p}/?sort=popular`, "gay")
   };
   const getUrl = CATEGORY_URLS[category] || CATEGORY_URLS.female;
   const pageUrl = getUrl(page);
@@ -119,10 +119,9 @@ async function onRequest(context) {
       if (spanMatch) name = spanMatch[1].trim();
       else if (altMatch) name = altMatch[1].trim();
       seenSlugs.add(slug);
-      performers.push({ name, slug, avatarUrl });
+      performers.push({ name: cleanPerformerName(name), slug, avatarUrl });
     }
-    const nextPageNum = page + 1;
-    const hasMore = html.includes('rel="next"') || html.includes(`rel='next'`) || html.includes(`page=${nextPageNum}`) || html.includes(`page%3D${nextPageNum}`);
+    const hasMore = performers.length > 0;
     return jsonResponse({
       performers,
       page,
@@ -137,6 +136,11 @@ async function onRequest(context) {
   }
 }
 __name(onRequest, "onRequest");
+function cleanPerformerName(name) {
+  if (!name) return "";
+  return name.replace(/\b(?:nude|pics|photos|videos|pic|photo|video|bio|profile|pornstar|porn\s+star)\b/gi, "").replace(/&/g, "").replace(/,/g, "").replace(/\s+/g, " ").trim();
+}
+__name(cleanPerformerName, "cleanPerformerName");
 function slugToName(slug) {
   return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -302,7 +306,7 @@ async function onRequest3(context) {
   try {
     let add = function(u) {
       const clean = u.trim();
-      const normalized = clean.replace(/\/\d{2,4}\//g, "/SIZE/");
+      const normalized = clean.replace(/(https:\/\/cdni\.pornpics\.com\/)\d{2,4}\//i, "$1SIZE/");
       if (clean && !seen.has(normalized)) {
         seen.add(normalized);
         photos.push(clean);
@@ -313,7 +317,7 @@ async function onRequest3(context) {
     if (!res.ok) {
       const verifiedAvatar = await verifyUrl(avatarUrl, HEADERS);
       const fallback = verifiedAvatar ? [avatarUrl] : [];
-      return jsonResponse2({ name: slugToName2(slug), slug, photos: fallback });
+      return jsonResponse2({ name: cleanPerformerName2(slugToName2(slug)), slug, photos: fallback });
     }
     const html = await res.text();
     const seen = /* @__PURE__ */ new Set();
@@ -341,9 +345,9 @@ async function onRequest3(context) {
       if (n.length > 1 && n.length < 60) name = n;
     }
     const finalPhotos = photos.slice(0, 50);
-    return jsonResponse2({ name, slug, photos: finalPhotos, totalFound: photos.length });
+    return jsonResponse2({ name: cleanPerformerName2(name), slug, photos: finalPhotos, totalFound: photos.length });
   } catch (err) {
-    return jsonResponse2({ name: slugToName2(slug), slug, photos: [], error: err.message });
+    return jsonResponse2({ name: cleanPerformerName2(slugToName2(slug)), slug, photos: [], error: err.message });
   }
 }
 __name(onRequest3, "onRequest");
@@ -356,6 +360,11 @@ async function verifyUrl(url, headers) {
   }
 }
 __name(verifyUrl, "verifyUrl");
+function cleanPerformerName2(name) {
+  if (!name) return "";
+  return name.replace(/\b(?:nude|pics|photos|videos|pic|photo|video|bio|profile|pornstar|porn\s+star)\b/gi, "").replace(/&/g, "").replace(/,/g, "").replace(/\s+/g, " ").trim();
+}
+__name(cleanPerformerName2, "cleanPerformerName");
 function slugToName2(slug) {
   return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -884,7 +893,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// ../.wrangler/tmp/bundle-2w2bPw/middleware-insertion-facade.js
+// ../.wrangler/tmp/bundle-hm38i7/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -916,7 +925,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// ../.wrangler/tmp/bundle-2w2bPw/middleware-loader.entry.ts
+// ../.wrangler/tmp/bundle-hm38i7/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

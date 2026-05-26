@@ -10,6 +10,16 @@ function getProxiedUrl(url) {
     return url;
 }
 
+function cleanPerformerName(name) {
+    if (!name) return '';
+    return name
+        .replace(/\b(?:nude|pics|photos|videos|pic|photo|video|bio|profile|pornstar|porn\s+star)\b/gi, '')
+        .replace(/&/g, '')
+        .replace(/,/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 // --- Data Store ---
 class DataStore {
     constructor() {
@@ -52,7 +62,7 @@ class DataStore {
         if (stored) {
             try {
                 const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed) && parsed.length > 0) {
+                if (Array.isArray(parsed)) {
                     this.characters = parsed;
                     return;
                 }
@@ -69,6 +79,11 @@ class DataStore {
                 console.error('Failed to load dummy data:', e);
             }
         }
+    }
+
+    clearAll() {
+        this.characters = [];
+        this.saveCharacters();
     }
 
     saveScores() {
@@ -561,6 +576,13 @@ class App {
             document.getElementById('randomModalImage').src = getProxiedUrl(randomChar.photoUrl);
             document.getElementById('randomModalName').textContent = randomChar.name;
             document.getElementById('randomModalCategory').textContent = randomChar.category;
+            
+            const searchBtn = document.getElementById('randomModalSearchBtn');
+            if (searchBtn) {
+                searchBtn.href = `https://www.google.com/search?tbm=vid&q=${encodeURIComponent(randomChar.name + ' porn video')}`;
+                searchBtn.classList.remove('hidden');
+            }
+            
             this.openModal('random');
         };
 
@@ -619,6 +641,7 @@ class App {
         document.getElementById('editCharacterForm').addEventListener('submit', (e) => this.handleEditCharacter(e));
         document.getElementById('exportDataBtn').addEventListener('click', () => this.store.exportData());
         document.getElementById('importDataInput').addEventListener('change', (e) => this.handleImportData(e));
+        document.getElementById('clearAllDataBtn').addEventListener('click', () => this.handleClearAllData());
 
         // Home Screen
         document.getElementById('homeCategoryGrid').addEventListener('click', (e) => {
@@ -708,8 +731,17 @@ class App {
         this.modals[modalId].classList.add('hidden');
     }
 
-    openImageModal(src) {
+    openImageModal(src, name = null) {
         document.getElementById('globalModalImage').src = src;
+        const searchBtn = document.getElementById('globalModalSearchBtn');
+        if (searchBtn) {
+            if (name) {
+                searchBtn.href = `https://www.google.com/search?tbm=vid&q=${encodeURIComponent(name + ' porn video')}`;
+                searchBtn.classList.remove('hidden');
+            } else {
+                searchBtn.classList.add('hidden');
+            }
+        }
         this.openModal('image');
     }
 
@@ -808,6 +840,7 @@ class App {
                 <div class="char-item-actions">
                     <button class="char-action-btn edit" onclick="app.openEditModal('${c.id}', event)" title="Edit">✏️</button>
                     <button class="char-action-btn delete" onclick="app.handleDeleteCharacter('${c.id}', event)" title="Delete">🗑️</button>
+                    <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(c.name + ' porn video')}" target="_blank" class="char-action-btn search" title="Search Video" onclick="event.stopPropagation()">🎬</a>
                 </div>
                 <div class="char-item-info">
                     <strong>${c.name}</strong>
@@ -879,6 +912,12 @@ class App {
         const img = document.getElementById('gameImage');
         img.src = getProxiedUrl(state.currentQuestion.correct.photoUrl);
         
+        const searchBtn = document.getElementById('gameSearchVideoBtn');
+        if (searchBtn) {
+            searchBtn.href = `https://www.google.com/search?tbm=vid&q=${encodeURIComponent(state.currentQuestion.correct.name + ' porn video')}`;
+            searchBtn.classList.remove('hidden');
+        }
+        
         const optsContainer = document.getElementById('gameOptions');
         optsContainer.innerHTML = '';
         
@@ -929,7 +968,10 @@ class App {
                 const item = document.createElement('div');
                 item.className = 'mistake-item';
                 item.innerHTML = `
-                    <img src="${getProxiedUrl(m.image)}" alt="Character">
+                    <div class="mistake-img-container">
+                        <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(m.correctName + ' porn video')}" target="_blank" class="char-action-btn search" title="Search Video">🎬</a>
+                        <img src="${getProxiedUrl(m.image)}" alt="Character">
+                    </div>
                     <div class="mistake-info">
                         <span class="wrong">${m.wrongName}</span>
                         <span class="right">${m.correctName}</span>
@@ -1067,6 +1109,17 @@ class App {
         });
     }
 
+    handleClearAllData() {
+        if (confirm('Are you sure you want to permanently clear all performers data? This cannot be undone.')) {
+            this.store.clearAll();
+            this.renderGallery();
+            this.renderHome();
+            this.showToast('All performer data has been cleared.');
+            const managerModal = document.getElementById('managerModal');
+            if (managerModal) managerModal.classList.add('hidden');
+        }
+    }
+
 }
 
 // =================== SMART ADDER ===================
@@ -1122,6 +1175,16 @@ class SmartAdder {
             });
         });
 
+        const searchForm = document.getElementById('smartSearchForm');
+        if (searchForm) {
+            searchForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const name = document.getElementById('smartSearchInput').value;
+                const cat = document.getElementById('smartSearchCategory').value;
+                this.searchPerformer(name, cat);
+            });
+        }
+
         // Resume saved session
         document.getElementById('smartAddResumeBtn').addEventListener('click', () => {
             this.resumeSession();
@@ -1141,13 +1204,14 @@ class SmartAdder {
         document.addEventListener('keydown', (e) => {
             if (this.modal.classList.contains('hidden')) return;
             if (this.state.phase !== 'browsing') return;
+            if (document.activeElement === this.nameInput) return;
+
             if (e.key === 'ArrowLeft')  this.prevPhoto();
             if (e.key === 'ArrowRight') this.nextPhoto();
-            // --- Bug #10 Fix: don't trigger Add when user is typing in the name input ---
-            if (e.key === 'Enter' && document.activeElement !== this.nameInput) {
+            if (e.key === 'Enter') {
                 document.getElementById('smartSaveAddBtn').click();
             }
-            if ((e.key === 's' || e.key === 'S') && document.activeElement !== this.nameInput) {
+            if (e.key === 's' || e.key === 'S') {
                 document.getElementById('smartSkipBtn').click();
             }
         });
@@ -1169,7 +1233,7 @@ class SmartAdder {
         // Click photo to view full-size
         this.photoEl.addEventListener('click', () => {
             if (this.photoEl.src) {
-                this.app.openImageModal(this.photoEl.src);
+                this.app.openImageModal(this.photoEl.src, this.state.current?.name);
             }
         });
     }
@@ -1233,10 +1297,12 @@ class SmartAdder {
         // --- Bug #9 Fix: re-filter the saved queue against the current store ---
         // Characters may have been added manually since the session was saved.
         const existingNames = new Set(
-            this.app.store.getCharacters().map(c => c.name.toLowerCase().trim())
+            this.app.store.getCharacters()
+                .filter(c => c && c.name)
+                .map(c => c.name.toLowerCase().trim())
         );
         this.state.queue = (saved.queue || []).filter(
-            p => !existingNames.has(p.name.toLowerCase().trim())
+            p => p && p.name && !existingNames.has(p.name.toLowerCase().trim())
         );
 
         const CAT_LABELS = { female: 'Female Pornstars', shemale: 'Shemale Stars', gay: 'Gay/Twink Stars' };
@@ -1306,8 +1372,8 @@ class SmartAdder {
         } else {
             msg.textContent = 'All performers on this page have been reviewed!';
             loadMoreBtn.classList.remove('hidden');
-            loadMoreBtn.disabled = !this.state.hasMore;
-            loadMoreBtn.title = this.state.hasMore ? '' : 'No more pages';
+            loadMoreBtn.disabled = false;
+            loadMoreBtn.title = '';
             retryBtn.classList.add('hidden');
         }
     }
@@ -1315,6 +1381,7 @@ class SmartAdder {
     // ---- Category Start ----
     async startCategory(pornpicsCat, gameCat) {
         this.clearSession();
+        this.state.mode        = 'bulk';
         this.state.category    = pornpicsCat;
         this.state.gameCat     = gameCat;
         this.state.queue       = [];
@@ -1331,6 +1398,40 @@ class SmartAdder {
 
         this.showPhase2();
         await this.fetchPerformers();
+        if (this.state.fetchFailed) {
+            this.showEmpty('error');
+            return;
+        }
+        this.loadNextPerformer();
+    }
+
+    // ---- Search Single Performer ----
+    async searchPerformer(name, gameCat) {
+        this.clearSession();
+        this.state.mode        = 'single';
+        this.state.category    = 'search';
+        this.state.gameCat     = gameCat;
+        this.state.queue       = [];
+        this.state.currentPage = 1;
+        this.state.hasMore     = false;
+        this.state.addedCount  = 0;
+        this.state.current     = null;
+        this.state.photos      = [];
+        this.state.photoIdx    = 0;
+        
+        const slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const performer = {
+            name: name.trim(),
+            slug: slug,
+            avatarUrl: ''
+        };
+        
+        this.state.queue.push(performer);
+        
+        this.catLabel.textContent = 'Search Result';
+        this.subtitle.textContent = `Searching for ${name}`;
+        
+        this.showPhase2();
         this.loadNextPerformer();
     }
 
@@ -1345,10 +1446,12 @@ class SmartAdder {
             if (data.performers && data.performers.length > 0) {
                 // Filter out already-added names
                 const existingNames = new Set(
-                    this.app.store.getCharacters().map(c => c.name.toLowerCase().trim())
+                    this.app.store.getCharacters()
+                        .filter(c => c && c.name)
+                        .map(c => c.name.toLowerCase().trim())
                 );
                 const fresh = data.performers.filter(p =>
-                    !existingNames.has(p.name.toLowerCase().trim())
+                    p && p.name && !existingNames.has(p.name.toLowerCase().trim())
                 );
                 this.state.queue.push(...fresh);
             }
@@ -1365,32 +1468,62 @@ class SmartAdder {
     }
 
     // ---- Load Next Performer ----
-    async loadNextPerformer() {
-        if (this.state.queue.length === 0) {
-            if (this.state.hasMore) {
-                await this.fetchPerformers();
-                if (this.state.fetchFailed) {
-                    this.showEmpty('error');
+    async loadNextPerformer(isAutoSkip = false) {
+        if (!isAutoSkip || typeof this.state.pagesFetched === 'undefined') {
+            this.state.pagesFetched = 0;
+        }
+        while (true) {
+            if (this.state.queue.length === 0) {
+                if (this.state.mode === 'single') {
+                    this.closeModal();
                     return;
                 }
-                if (this.state.queue.length === 0) {
+                
+                if (this.state.hasMore && this.state.pagesFetched < 3) {
+                    this.state.pagesFetched++;
+                    await this.fetchPerformers();
+                    if (this.state.fetchFailed) {
+                        this.showEmpty('error');
+                        return;
+                    }
+                    if (this.state.queue.length === 0) {
+                        this.showEmpty('done');
+                        return;
+                    }
+                } else {
                     this.showEmpty('done');
                     return;
                 }
-            } else {
-                this.showEmpty('done');
-                return;
             }
-        }
 
-        this.state.current  = this.state.queue.shift();
-        this.state.photos   = [];
-        this.state.photoIdx = 0;
+            this.state.current  = this.state.queue.shift();
+            this.state.photos   = [];
+            this.state.photoIdx = 0;
+            this.state.currentPhotoUrl = null;
+
+            // --- Auto-skip: check if this performer is already in the store ---
+            if (this._isAlreadyAdded(this.state.current.name)) {
+                console.log(`Auto-skipped: ${this.state.current.name} (already exists)`);
+                continue;
+            }
+
+            break;
+        }
 
         this.updateStats();
         this.saveSession();
         this.renderPerformer();
         this.fetchPerformerPhotos(this.state.current.slug);
+    }
+
+    // Helper: case-insensitive name check against the store
+    _isAlreadyAdded(name) {
+        if (!name) return false;
+        const normalized = name.trim().toLowerCase();
+        return this.app.store.getCharacters().some(c => {
+            if (!c || !c.name) return false;
+            return c.name.toLowerCase().trim() === normalized;
+        });
     }
 
     // ---- Render Current Performer (with avatar immediately) ----
@@ -1406,6 +1539,7 @@ class SmartAdder {
         const initialPhoto = p.avatarUrl || '';
         this.state.photos = initialPhoto ? [initialPhoto] : [];
         this.state.photoIdx = 0;
+        this.state.currentPhotoUrl = null;
         this.showCurrentPhoto();
 
         this.showPerformer();
@@ -1420,12 +1554,22 @@ class SmartAdder {
             const data = await res.json();
 
             if (data.photos && data.photos.length > 0) {
-                this.state.photos = data.photos;
+                // Always skip the first photo if we have more than 1 photo
+                this.state.photos = data.photos.length > 1 ? data.photos.slice(1) : data.photos;
                 this.state.photoIdx = 0;
                 // If API found a better name, update it
                 if (data.name && data.name !== slug) {
-                    this.nameInput.value = data.name;
-                    this.state.current.name = data.name;
+                    const cleanedName = cleanPerformerName(data.name);
+                    this.nameInput.value = cleanedName;
+                    this.state.current.name = cleanedName;
+
+                    // --- Auto-skip: real name may differ from slug name and already exist ---
+                    if (this._isAlreadyAdded(data.name)) {
+                        this.photoOverlay.classList.add('hidden');
+                        console.log(`Auto-skipped: ${data.name} (already exists)`);
+                        this.loadNextPerformer(true);
+                        return;
+                    }
                 }
                 this.showCurrentPhoto();
             }
@@ -1445,16 +1589,52 @@ class SmartAdder {
             return;
         }
 
-        const url = photos[this.state.photoIdx];
+        const originalUrl = photos[this.state.photoIdx];
+        const url1280 = originalUrl.replace(/(https:\/\/cdni\.pornpics\.com\/)460\//i, '$11280/');
+        
         this.photoEl.style.opacity = '0.6';
-        this.photoEl.src = url;
+
+        if (this.state.currentPhotoUrl !== originalUrl) {
+            this.state.currentPhotoUrl = originalUrl;
+            this.state.tryingFallback = false;
+        }
+
+        // Update search button
+        const searchBtn = document.getElementById('smartSearchVideoBtn');
+        if (searchBtn) {
+            if (this.state.current?.name) {
+                searchBtn.href = `https://www.google.com/search?tbm=vid&q=${encodeURIComponent(this.state.current.name + ' porn video')}`;
+                searchBtn.classList.remove('hidden');
+            } else {
+                searchBtn.classList.add('hidden');
+            }
+        }
+
+        if (!this.state.tryingFallback && url1280 !== originalUrl) {
+            this.photoEl.src = url1280;
+        } else {
+            this.photoEl.src = originalUrl;
+        }
+
         this.photoEl.onload = () => { this.photoEl.style.opacity = '1'; };
+        
         this.photoEl.onerror = () => {
-            // Remove broken photo and try next
+            if (!this.state.tryingFallback && url1280 !== originalUrl) {
+                // 1280 failed, fallback to original
+                this.state.tryingFallback = true;
+                this.photoEl.src = originalUrl;
+                return;
+            }
+
+            // Both failed, remove broken photo and try next
             this.state.photos.splice(this.state.photoIdx, 1);
             if (this.state.photos.length > 0) {
                 this.state.photoIdx = Math.min(this.state.photoIdx, this.state.photos.length - 1);
+                this.state.currentPhotoUrl = null; // Reset fallback for next photo
                 this.showCurrentPhoto();
+            } else {
+                this.photoEl.src = '';
+                this.counterEl.textContent = '0 / 0';
             }
         };
         this.counterEl.textContent = `${this.state.photoIdx + 1} / ${photos.length}`;
@@ -1467,23 +1647,42 @@ class SmartAdder {
     prevPhoto() {
         if (this.state.photos.length <= 1) return;
         this.state.photoIdx = (this.state.photoIdx - 1 + this.state.photos.length) % this.state.photos.length;
+        this.state.currentPhotoUrl = null;
         this.showCurrentPhoto();
     }
 
     nextPhoto() {
         if (this.state.photos.length <= 1) return;
         this.state.photoIdx = (this.state.photoIdx + 1) % this.state.photos.length;
+        this.state.currentPhotoUrl = null;
         this.showCurrentPhoto();
     }
 
     // ---- Label Pills ----
     renderLabelPills(activeLabels) {
         this.labelPills.innerHTML = '';
-        const allLabels = this.app.store.customLabels;
+        
+        const rawName = this.nameInput.value ? this.nameInput.value.trim() : '';
+        const nameLabel = rawName ? cleanPerformerName(rawName).toLowerCase() : '';
+        
+        // Display performer name as a visual-only badge
+        if (nameLabel) {
+            const nameEl = document.createElement('div');
+            nameEl.className = 'label-cb-pill performer-name-badge';
+            nameEl.innerHTML = `<span>👤 ${nameLabel}</span>`;
+            nameEl.title = "Performer Name (Not saved as a custom label)";
+            this.labelPills.appendChild(nameEl);
+        }
+        
+        const allLabels = this.app.store.customLabels || [];
+
         if (allLabels.length === 0) {
-            this.labelPills.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted)">No labels</span>';
+            if (!nameLabel) {
+                this.labelPills.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted)">No labels</span>';
+            }
             return;
         }
+
         allLabels.forEach(label => {
             const isChecked = activeLabels.includes(label);
             const el = document.createElement('label');
@@ -1495,9 +1694,9 @@ class SmartAdder {
 
     // ---- Add Current Performer ----
     async addCurrentPerformer() {
-        const name     = this.nameInput.value.trim();
+        const name     = cleanPerformerName(this.nameInput.value);
         const category = this.catSelect.value;
-        const photoUrl = this.state.photos[this.state.photoIdx] || '';
+        const photoUrl = this.photoEl.src || '';
         const labels   = Array.from(this.labelPills.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 
         if (!name || !photoUrl) {
@@ -1540,11 +1739,6 @@ class SmartAdder {
 
     // ---- Load More from Next Page ----
     async loadMorePerformers() {
-        if (!this.state.hasMore) {
-            this.app.showToast('No more pages available', 'error');
-            return;
-        }
-        // --- Bug #11 Fix: only call loadNextPerformer if fetchPerformers added items ---
         const queueBefore = this.state.queue.length;
         await this.fetchPerformers();
         if (this.state.fetchFailed) {
@@ -1554,10 +1748,14 @@ class SmartAdder {
         if (this.state.queue.length > queueBefore) {
             this.loadNextPerformer();
         } else if (!this.state.hasMore) {
+            // API returned zero performers — we've truly reached the end
+            this.app.showToast('No more performers found!', 'error');
             this.showEmpty('done');
         } else {
-            // Fetched successfully but all results were already in store — try next page
-            await this.loadMorePerformers();
+            // All performers on this page exist in the collection.
+            // Show the empty state and let the user decide if they want to click manually again.
+            this.app.showToast('All performers on this page already exist in your collection.', 'info');
+            this.showEmpty('done');
         }
     }
 
@@ -1573,7 +1771,8 @@ class SmartAdder {
         } else if (!this.state.hasMore) {
             this.showEmpty('done');
         } else {
-            await this.loadMorePerformers();
+            this.app.showToast('All performers on this page already exist in your collection.', 'info');
+            this.showEmpty('done');
         }
     }
 }

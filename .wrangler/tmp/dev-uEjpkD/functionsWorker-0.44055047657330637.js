@@ -15,9 +15,9 @@ async function onRequest(context) {
     "Referer": "https://www.pornpics.com/"
   };
   const CATEGORY_URLS = {
-    female: /* @__PURE__ */ __name2((p) => p === 1 ? "https://www.pornpics.com/pornstars/?sort=popular" : `https://www.pornpics.com/pornstars/?sort=popular&page=${p}`, "female"),
-    shemale: /* @__PURE__ */ __name2((p) => p === 1 ? "https://www.pornpics.com/pornstars/shemale/?sort=popular" : `https://www.pornpics.com/pornstars/shemale/?sort=popular&page=${p}`, "shemale"),
-    gay: /* @__PURE__ */ __name2((p) => p === 1 ? "https://www.pornpics.com/pornstars/gay/?sort=popular" : `https://www.pornpics.com/pornstars/gay/?sort=popular&page=${p}`, "gay")
+    female: /* @__PURE__ */ __name2((p) => p === 1 ? "https://www.pornpics.com/pornstars/?sort=popular" : `https://www.pornpics.com/pornstars/${p}/?sort=popular`, "female"),
+    shemale: /* @__PURE__ */ __name2((p) => p === 1 ? "https://www.pornpics.com/pornstars/shemale/?sort=popular" : `https://www.pornpics.com/pornstars/shemale/${p}/?sort=popular`, "shemale"),
+    gay: /* @__PURE__ */ __name2((p) => p === 1 ? "https://www.pornpics.com/pornstars/gay/?sort=popular" : `https://www.pornpics.com/pornstars/gay/${p}/?sort=popular`, "gay")
   };
   const getUrl = CATEGORY_URLS[category] || CATEGORY_URLS.female;
   const pageUrl = getUrl(page);
@@ -121,10 +121,9 @@ async function onRequest(context) {
       if (spanMatch) name = spanMatch[1].trim();
       else if (altMatch) name = altMatch[1].trim();
       seenSlugs.add(slug);
-      performers.push({ name, slug, avatarUrl });
+      performers.push({ name: cleanPerformerName(name), slug, avatarUrl });
     }
-    const nextPageNum = page + 1;
-    const hasMore = html.includes('rel="next"') || html.includes(`rel='next'`) || html.includes(`page=${nextPageNum}`) || html.includes(`page%3D${nextPageNum}`);
+    const hasMore = performers.length > 0;
     return jsonResponse({
       performers,
       page,
@@ -140,6 +139,12 @@ async function onRequest(context) {
 }
 __name(onRequest, "onRequest");
 __name2(onRequest, "onRequest");
+function cleanPerformerName(name) {
+  if (!name) return "";
+  return name.replace(/\b(?:nude|pics|photos|videos|pic|photo|video|bio|profile|pornstar|porn\s+star)\b/gi, "").replace(/&/g, "").replace(/,/g, "").replace(/\s+/g, " ").trim();
+}
+__name(cleanPerformerName, "cleanPerformerName");
+__name2(cleanPerformerName, "cleanPerformerName");
 function slugToName(slug) {
   return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -309,7 +314,7 @@ async function onRequest3(context) {
   try {
     let add = /* @__PURE__ */ __name(function(u) {
       const clean = u.trim();
-      const normalized = clean.replace(/\/\d{2,4}\//g, "/SIZE/");
+      const normalized = clean.replace(/(https:\/\/cdni\.pornpics\.com\/)\d{2,4}\//i, "$1SIZE/");
       if (clean && !seen.has(normalized)) {
         seen.add(normalized);
         photos.push(clean);
@@ -320,7 +325,7 @@ async function onRequest3(context) {
     if (!res.ok) {
       const verifiedAvatar = await verifyUrl(avatarUrl, HEADERS);
       const fallback = verifiedAvatar ? [avatarUrl] : [];
-      return jsonResponse2({ name: slugToName2(slug), slug, photos: fallback });
+      return jsonResponse2({ name: cleanPerformerName2(slugToName2(slug)), slug, photos: fallback });
     }
     const html = await res.text();
     const seen = /* @__PURE__ */ new Set();
@@ -348,9 +353,9 @@ async function onRequest3(context) {
       if (n.length > 1 && n.length < 60) name = n;
     }
     const finalPhotos = photos.slice(0, 50);
-    return jsonResponse2({ name, slug, photos: finalPhotos, totalFound: photos.length });
+    return jsonResponse2({ name: cleanPerformerName2(name), slug, photos: finalPhotos, totalFound: photos.length });
   } catch (err) {
-    return jsonResponse2({ name: slugToName2(slug), slug, photos: [], error: err.message });
+    return jsonResponse2({ name: cleanPerformerName2(slugToName2(slug)), slug, photos: [], error: err.message });
   }
 }
 __name(onRequest3, "onRequest3");
@@ -365,6 +370,12 @@ async function verifyUrl(url, headers) {
 }
 __name(verifyUrl, "verifyUrl");
 __name2(verifyUrl, "verifyUrl");
+function cleanPerformerName2(name) {
+  if (!name) return "";
+  return name.replace(/\b(?:nude|pics|photos|videos|pic|photo|video|bio|profile|pornstar|porn\s+star)\b/gi, "").replace(/&/g, "").replace(/,/g, "").replace(/\s+/g, " ").trim();
+}
+__name(cleanPerformerName2, "cleanPerformerName2");
+__name2(cleanPerformerName2, "cleanPerformerName");
 function slugToName2(slug) {
   return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

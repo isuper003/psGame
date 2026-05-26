@@ -20,9 +20,9 @@ export async function onRequest(context) {
      *   /pornstars/gay/?sort=popular
      */
     const CATEGORY_URLS = {
-        female:  (p) => p === 1 ? 'https://www.pornpics.com/pornstars/?sort=popular' : `https://www.pornpics.com/pornstars/?sort=popular&page=${p}`,
-        shemale: (p) => p === 1 ? 'https://www.pornpics.com/pornstars/shemale/?sort=popular' : `https://www.pornpics.com/pornstars/shemale/?sort=popular&page=${p}`,
-        gay:     (p) => p === 1 ? 'https://www.pornpics.com/pornstars/gay/?sort=popular' : `https://www.pornpics.com/pornstars/gay/?sort=popular&page=${p}`
+        female:  (p) => p === 1 ? 'https://www.pornpics.com/pornstars/?sort=popular' : `https://www.pornpics.com/pornstars/${p}/?sort=popular`,
+        shemale: (p) => p === 1 ? 'https://www.pornpics.com/pornstars/shemale/?sort=popular' : `https://www.pornpics.com/pornstars/shemale/${p}/?sort=popular`,
+        gay:     (p) => p === 1 ? 'https://www.pornpics.com/pornstars/gay/?sort=popular' : `https://www.pornpics.com/pornstars/gay/${p}/?sort=popular`
     };
 
     const getUrl = CATEGORY_URLS[category] || CATEGORY_URLS.female;
@@ -79,17 +79,14 @@ export async function onRequest(context) {
             else if (altMatch) name = altMatch[1].trim();
 
             seenSlugs.add(slug);
-            performers.push({ name, slug, avatarUrl });
+            performers.push({ name: cleanPerformerName(name), slug, avatarUrl });
         }
 
-        // --- Bug #5 Fix: Reliable hasMore detection ---
-        // Look for a rel="next" link (most reliable), OR a link to the NEXT page number specifically.
-        // We must NOT just check if any page= param exists — that matches the current page too.
-        const nextPageNum = page + 1;
-        const hasMore = html.includes('rel="next"') ||
-                        html.includes(`rel='next'`) ||
-                        html.includes(`page=${nextPageNum}`) ||
-                        html.includes(`page%3D${nextPageNum}`);
+        // Assume more pages exist if we got performers from this page.
+        // Only mark hasMore=false when zero performers came back (we've hit the end).
+        // The old approach of string-matching 'rel=next' or 'page=N' was unreliable
+        // because pornpics.com uses varied HTML structures across pages.
+        const hasMore = performers.length > 0;
 
         return jsonResponse({
             performers,
@@ -104,6 +101,16 @@ export async function onRequest(context) {
     } catch (err) {
         return jsonResponse({ error: err.message, performers: [] }, 500);
     }
+}
+
+function cleanPerformerName(name) {
+    if (!name) return '';
+    return name
+        .replace(/\b(?:nude|pics|photos|videos|pic|photo|video|bio|profile|pornstar|porn\s+star)\b/gi, '')
+        .replace(/&/g, '')
+        .replace(/,/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 function slugToName(slug) {
