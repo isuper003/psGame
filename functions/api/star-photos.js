@@ -25,7 +25,10 @@ export async function onRequest(context) {
         const res = await fetch(profileUrl, { headers: HEADERS });
 
         if (!res.ok) {
-            return jsonResponse({ name: slugToName(slug), slug, photos: [avatarUrl] });
+            // --- Bug #6 Fix: verify avatar CDN URL actually works before returning ---
+            const verifiedAvatar = await verifyUrl(avatarUrl, HEADERS);
+            const fallback = verifiedAvatar ? [avatarUrl] : [];
+            return jsonResponse({ name: slugToName(slug), slug, photos: fallback });
         }
 
         const html = await res.text();
@@ -34,8 +37,12 @@ export async function onRequest(context) {
 
         function add(u) {
             const clean = u.trim();
-            if (clean && !seen.has(clean)) {
-                seen.add(clean);
+            // --- Bug #7 Fix: deduplicate by "base path" — strip resolution/size prefix ---
+            // pornpics CDN uses paths like /1920/ab/cd/..., /640/ab/cd/..., /320/ab/cd/...
+            // Normalize by stripping the leading numeric segment so variants of same image collapse
+            const normalized = clean.replace(/\/\d{2,4}\//g, '/SIZE/');
+            if (clean && !seen.has(normalized)) {
+                seen.add(normalized);
                 photos.push(clean);
             }
         }
@@ -54,8 +61,11 @@ export async function onRequest(context) {
             add(m[0]);
         }
 
-        // Last resort
-        if (photos.length === 0) add(avatarUrl);
+        // Last resort: verify CDN avatar works before using it as fallback
+        if (photos.length === 0) {
+            const verifiedAvatar = await verifyUrl(avatarUrl, HEADERS);
+            if (verifiedAvatar) add(avatarUrl);
+        }
 
         // Extract real name from page <h1> or <title>
         let name = slugToName(slug);
@@ -69,10 +79,25 @@ export async function onRequest(context) {
             if (n.length > 1 && n.length < 60) name = n;
         }
 
-        return jsonResponse({ name, slug, photos: photos.slice(0, 30) });
+        // Bug #12 Fix: increased cap to 50 and expose totalFound to client
+        const finalPhotos = photos.slice(0, 50);
+        return jsonResponse({ name, slug, photos: finalPhotos, totalFound: photos.length });
 
     } catch (err) {
-        return jsonResponse({ name: slugToName(slug), slug, photos: [avatarUrl], error: err.message });
+        return jsonResponse({ name: slugToName(slug), slug, photos: [], error: err.message });
+    }
+}
+
+/**
+ * Bug #6 Fix: Verify a CDN URL actually responds 200 before trusting it.
+ * Uses HEAD to avoid downloading the full image.
+ */
+async function verifyUrl(url, headers) {
+    try {
+        const res = await fetch(url, { method: 'HEAD', headers });
+        return res.ok;
+    } catch {
+        return false;
     }
 }
 

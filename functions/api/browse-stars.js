@@ -82,8 +82,14 @@ export async function onRequest(context) {
             performers.push({ name, slug, avatarUrl });
         }
 
-        // Detect next page
-        const hasMore = html.includes('?sort=popular&page=') || html.includes('rel="next"');
+        // --- Bug #5 Fix: Reliable hasMore detection ---
+        // Look for a rel="next" link (most reliable), OR a link to the NEXT page number specifically.
+        // We must NOT just check if any page= param exists — that matches the current page too.
+        const nextPageNum = page + 1;
+        const hasMore = html.includes('rel="next"') ||
+                        html.includes(`rel='next'`) ||
+                        html.includes(`page=${nextPageNum}`) ||
+                        html.includes(`page%3D${nextPageNum}`);
 
         return jsonResponse({
             performers,

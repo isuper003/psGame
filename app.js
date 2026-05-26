@@ -81,6 +81,11 @@ class DataStore {
     }
 
     addCharacter(name, category, photoUrl, labels = []) {
+        // --- Bug #8 Fix: guard against duplicate names ---
+        const normalizedName = name.trim().toLowerCase();
+        if (this.characters.some(c => c.name.toLowerCase() === normalizedName)) {
+            throw new Error(`"${name.trim()}" already exists in your collection.`);
+        }
         const id = 'char-' + name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
         const newChar = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels };
         this.characters.push(newChar);
@@ -1138,8 +1143,13 @@ class SmartAdder {
             if (this.state.phase !== 'browsing') return;
             if (e.key === 'ArrowLeft')  this.prevPhoto();
             if (e.key === 'ArrowRight') this.nextPhoto();
-            if (e.key === 'Enter')      document.getElementById('smartSaveAddBtn').click();
-            if (e.key === 's' || e.key === 'S') document.getElementById('smartSkipBtn').click();
+            // --- Bug #10 Fix: don't trigger Add when user is typing in the name input ---
+            if (e.key === 'Enter' && document.activeElement !== this.nameInput) {
+                document.getElementById('smartSaveAddBtn').click();
+            }
+            if ((e.key === 's' || e.key === 'S') && document.activeElement !== this.nameInput) {
+                document.getElementById('smartSkipBtn').click();
+            }
         });
 
         // Add & Next
@@ -1214,17 +1224,31 @@ class SmartAdder {
         if (!saved) return;
         this.state.category    = saved.category;
         this.state.gameCat     = saved.gameCat;
-        this.state.queue       = saved.queue || [];
         this.state.currentPage = saved.currentPage || 1;
         this.state.hasMore     = saved.hasMore !== false;
         this.state.addedCount  = saved.addedCount || 0;
         this.state.phase       = 'browsing';
 
+        // --- Bug #9 Fix: re-filter the saved queue against the current store ---
+        // Characters may have been added manually since the session was saved.
+        const existingNames = new Set(
+            this.app.store.getCharacters().map(c => c.name.toLowerCase().trim())
+        );
+        this.state.queue = (saved.queue || []).filter(
+            p => !existingNames.has(p.name.toLowerCase().trim())
+        );
+
         const CAT_LABELS = { female: 'Female Pornstars', shemale: 'Shemale Stars', gay: 'Gay/Twink Stars' };
         this.catLabel.textContent = CAT_LABELS[this.state.category] || 'Performers';
         this.subtitle.textContent = `Resuming session • ${this.state.addedCount} added`;
 
-        this.showPhase2();
+        // --- Bug #1 Fix: if queue already has items, skip the loading screen ---
+        this.state.phase = 'browsing';
+        this.phase1.classList.add('hidden');
+        this.phase2.classList.remove('hidden');
+        if (this.state.queue.length === 0) {
+            this.showLoading('Loading more performers...');
+        }
         this.loadNextPerformer();
     }
 
@@ -1243,24 +1267,23 @@ class SmartAdder {
         this.showLoading('Loading performers...');
     }
 
+    // --- Bug #4 Fix: centralized visibility helpers use only class toggling ---
+    // All show*/hide* methods exclusively use classList to avoid style.display conflicts.
+
     showLoading(msg = 'Loading...') {
         this.loadingText.textContent = msg;
         this.loadingEl.classList.remove('hidden');
-        this.loadingEl.style.display = 'flex';
         this.performerEl.classList.add('hidden');
         this.emptyEl.classList.add('hidden');
     }
 
     showPerformer() {
-        this.loadingEl.style.display = 'none';
         this.loadingEl.classList.add('hidden');
         this.emptyEl.classList.add('hidden');
         this.performerEl.classList.remove('hidden');
-        this.performerEl.style.display = 'flex';
     }
 
     showEmpty() {
-        this.loadingEl.style.display = 'none';
         this.loadingEl.classList.add('hidden');
         this.performerEl.classList.add('hidden');
         this.emptyEl.classList.remove('hidden');
@@ -1462,20 +1485,28 @@ class SmartAdder {
         btn.disabled = true;
         btn.textContent = 'Saving...';
 
+        // --- Bug #2 Fix: only proceed to next performer on success ---
+        // --- Bug #3 Fix: synchronous addCharacter errors are now caught correctly ---
+        let success = false;
         try {
-            await this.app.store.addCharacter(name, category, photoUrl, labels);
+            this.app.store.addCharacter(name, category, photoUrl, labels);
+            success = true;
             this.state.addedCount++;
             this.app.showToast(`✅ ${name} added!`);
             this.app.renderGallery();
             this.app.renderHome();
         } catch (err) {
-            this.app.showToast(`Failed: ${err.message}`, 'error');
+            // Show the error (e.g. duplicate name, storage full) and stay on current performer
+            this.app.showToast(`${err.message}`, 'error');
         } finally {
             btn.disabled = false;
             btn.textContent = 'Add & Next ✅';
         }
 
-        this.loadNextPerformer();
+        // Only advance if the add was successful
+        if (success) {
+            this.loadNextPerformer();
+        }
     }
 
     // ---- Skip Current Performer ----
@@ -1489,8 +1520,19 @@ class SmartAdder {
             this.app.showToast('No more pages available', 'error');
             return;
         }
+        // --- Bug #11 Fix: only call loadNextPerformer if fetchPerformers added items ---
+        // Previously, loadNextPerformer would internally call fetchPerformers again
+        // on empty queue, causing a double-fetch of the same next page.
+        const queueBefore = this.state.queue.length;
         await this.fetchPerformers();
-        this.loadNextPerformer();
+        if (this.state.queue.length > queueBefore) {
+            this.loadNextPerformer();
+        } else if (!this.state.hasMore) {
+            this.showEmpty();
+        } else {
+            // Fetched successfully but all results were already in store — try next page
+            await this.loadMorePerformers();
+        }
     }
 }
 
