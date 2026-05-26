@@ -1160,6 +1160,7 @@ class SmartAdder {
 
         // Load more performers
         document.getElementById('smartLoadMoreBtn').addEventListener('click', () => this.loadMorePerformers());
+        document.getElementById('smartRetryBtn').addEventListener('click', () => this.retryFetch());
 
         // Close modal
         document.getElementById('closeSmartAddModal').addEventListener('click', () => this.closeModal());
@@ -1283,15 +1284,32 @@ class SmartAdder {
         this.performerEl.classList.remove('hidden');
     }
 
-    showEmpty() {
-        this.loadingEl.classList.add('hidden');
-        this.performerEl.classList.add('hidden');
-        this.emptyEl.classList.remove('hidden');
-    }
-
     updateStats() {
         this.statsEl.textContent = `✅ ${this.state.addedCount} added`;
         this.queueInfo.textContent = `${this.state.queue.length} in queue`;
+    }
+
+    // Show empty panel in two modes: 'done' (load more) or 'error' (retry)
+    showEmpty(mode = 'done') {
+        this.loadingEl.classList.add('hidden');
+        this.performerEl.classList.add('hidden');
+        this.emptyEl.classList.remove('hidden');
+
+        const msg = document.getElementById('smartAddEmptyMsg');
+        const loadMoreBtn = document.getElementById('smartLoadMoreBtn');
+        const retryBtn = document.getElementById('smartRetryBtn');
+
+        if (mode === 'error') {
+            msg.textContent = 'Failed to load the next page. Check your connection and try again.';
+            loadMoreBtn.classList.add('hidden');
+            retryBtn.classList.remove('hidden');
+        } else {
+            msg.textContent = 'All performers on this page have been reviewed!';
+            loadMoreBtn.classList.remove('hidden');
+            loadMoreBtn.disabled = !this.state.hasMore;
+            loadMoreBtn.title = this.state.hasMore ? '' : 'No more pages';
+            retryBtn.classList.add('hidden');
+        }
     }
 
     // ---- Category Start ----
@@ -1337,9 +1355,11 @@ class SmartAdder {
 
             this.state.hasMore = !!data.hasMore;
             this.state.currentPage = data.nextPage || this.state.currentPage + 1;
+            this.state.fetchFailed = false;
 
             this.updateStats();
         } catch (err) {
+            this.state.fetchFailed = true;
             this.app.showToast(`Failed to load performers: ${err.message}`, 'error');
         }
     }
@@ -1349,12 +1369,16 @@ class SmartAdder {
         if (this.state.queue.length === 0) {
             if (this.state.hasMore) {
                 await this.fetchPerformers();
+                if (this.state.fetchFailed) {
+                    this.showEmpty('error');
+                    return;
+                }
                 if (this.state.queue.length === 0) {
-                    this.showEmpty();
+                    this.showEmpty('done');
                     return;
                 }
             } else {
-                this.showEmpty();
+                this.showEmpty('done');
                 return;
             }
         }
@@ -1521,16 +1545,34 @@ class SmartAdder {
             return;
         }
         // --- Bug #11 Fix: only call loadNextPerformer if fetchPerformers added items ---
-        // Previously, loadNextPerformer would internally call fetchPerformers again
-        // on empty queue, causing a double-fetch of the same next page.
         const queueBefore = this.state.queue.length;
         await this.fetchPerformers();
+        if (this.state.fetchFailed) {
+            this.showEmpty('error');
+            return;
+        }
         if (this.state.queue.length > queueBefore) {
             this.loadNextPerformer();
         } else if (!this.state.hasMore) {
-            this.showEmpty();
+            this.showEmpty('done');
         } else {
             // Fetched successfully but all results were already in store — try next page
+            await this.loadMorePerformers();
+        }
+    }
+
+    // ---- Retry after a failed fetch ----
+    async retryFetch() {
+        this.state.fetchFailed = false;
+        this.showLoading(`Retrying page ${this.state.currentPage}...`);
+        await this.fetchPerformers();
+        if (this.state.fetchFailed) {
+            this.showEmpty('error');
+        } else if (this.state.queue.length > 0) {
+            this.loadNextPerformer();
+        } else if (!this.state.hasMore) {
+            this.showEmpty('done');
+        } else {
             await this.loadMorePerformers();
         }
     }
