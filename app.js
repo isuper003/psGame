@@ -840,7 +840,7 @@ class App {
                 <div class="char-item-actions">
                     <button class="char-action-btn edit" onclick="app.openEditModal('${c.id}', event)" title="Edit">✏️</button>
                     <button class="char-action-btn delete" onclick="app.handleDeleteCharacter('${c.id}', event)" title="Delete">🗑️</button>
-                    <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(c.name + ' porn video')}" target="_blank" class="char-action-btn search" title="Search Video" onclick="event.stopPropagation()">🎬</a>
+                    <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(c.name + ' porn video')}" target="_blank" class="char-action-btn search" title="Search Video" onclick="event.stopPropagation()" style="text-decoration:none; display:flex; align-items:center; justify-content:center; background: rgba(59, 130, 246, 0.8);">🎬</a>
                 </div>
                 <div class="char-item-info">
                     <strong>${c.name}</strong>
@@ -968,8 +968,8 @@ class App {
                 const item = document.createElement('div');
                 item.className = 'mistake-item';
                 item.innerHTML = `
-                    <div class="mistake-img-container">
-                        <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(m.correctName + ' porn video')}" target="_blank" class="char-action-btn search" title="Search Video">🎬</a>
+                    <div class="mistake-img-container" style="position:relative;">
+                        <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(m.correctName + ' porn video')}" target="_blank" class="char-action-btn" title="Search Video" style="position:absolute; top:0.5rem; right:0.5rem; text-decoration:none; display:flex; align-items:center; justify-content:center; background: rgba(59, 130, 246, 0.8); z-index:10;">🎬</a>
                         <img src="${getProxiedUrl(m.image)}" alt="Character">
                     </div>
                     <div class="mistake-info">
@@ -1668,7 +1668,11 @@ class SmartAdder {
         // Display performer name as a visual-only badge
         if (nameLabel) {
             const nameEl = document.createElement('div');
-            nameEl.className = 'label-cb-pill performer-name-badge';
+            nameEl.className = 'label-cb-pill';
+            nameEl.style.backgroundColor = 'var(--primary)';
+            nameEl.style.color = '#fff';
+            nameEl.style.borderColor = 'var(--primary)';
+            nameEl.style.cursor = 'default';
             nameEl.innerHTML = `<span>👤 ${nameLabel}</span>`;
             nameEl.title = "Performer Name (Not saved as a custom label)";
             this.labelPills.appendChild(nameEl);
