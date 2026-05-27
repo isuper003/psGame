@@ -36,6 +36,19 @@ class DataStore {
 
     saveLabels() {
         localStorage.setItem('charquiz_custom_labels', JSON.stringify(this.customLabels));
+        this.pushLabelsToKV();
+    }
+
+    async pushLabelsToKV() {
+        try {
+            await fetch('/api/labels', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.customLabels)
+            });
+        } catch (err) {
+            console.error('Failed to push labels to KV:', err);
+        }
     }
 
     addLabel(label) {
@@ -55,6 +68,19 @@ class DataStore {
 
     saveCharacters() {
         localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.characters));
+        this.pushCharactersToKV();
+    }
+
+    async pushCharactersToKV() {
+        try {
+            await fetch('/api/characters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.characters)
+            });
+        } catch (err) {
+            console.error('Failed to push characters to KV:', err);
+        }
     }
 
     loadCharacters() {
@@ -183,6 +209,66 @@ class DataStore {
             }
         };
         reader.readAsText(file);
+    }
+
+    async syncWithKV() {
+        try {
+            const res = await fetch('/api/characters');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const kvChars = await res.json();
+
+            const localChars = this.characters;
+            const mergedMap = new Map();
+
+            localChars.forEach(c => {
+                if (c && c.name) mergedMap.set(c.name.toLowerCase().trim(), c);
+            });
+
+            if (Array.isArray(kvChars)) {
+                kvChars.forEach(c => {
+                    if (c && c.name) mergedMap.set(c.name.toLowerCase().trim(), c);
+                });
+            }
+
+            const merged = Array.from(mergedMap.values());
+            this.characters = merged;
+            localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.characters));
+
+            await fetch('/api/characters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(merged)
+            });
+
+            await this.syncLabelsWithKV();
+            return true;
+        } catch (err) {
+            console.error('KV Sync failed:', err);
+            return false;
+        }
+    }
+
+    async syncLabelsWithKV() {
+        try {
+            const res = await fetch('/api/labels');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const kvLabels = await res.json();
+
+            const localLabels = this.customLabels;
+            const mergedSet = new Set([...localLabels, ...kvLabels]);
+            const merged = Array.from(mergedSet).filter(l => l && l.trim());
+
+            this.customLabels = merged;
+            localStorage.setItem('charquiz_custom_labels', JSON.stringify(this.customLabels));
+
+            await fetch('/api/labels', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(merged)
+            });
+        } catch (err) {
+            console.error('KV Labels Sync failed:', err);
+        }
     }
 }
 
@@ -459,9 +545,19 @@ class App {
         });
     }
 
-    initData() {
+    async initData() {
         this.store.loadCharacters();
         this.renderHome();
+        
+        // Background sync on startup
+        const success = await this.store.syncWithKV();
+        if (success) {
+            this.renderHome();
+            if (!this.screens.gallery.classList.contains('hidden')) {
+                this.renderGallery();
+            }
+            console.log('KV Sync successful on startup.');
+        }
     }
 
     initDOM() {
@@ -536,10 +632,25 @@ class App {
 
         const syncBtn = document.getElementById('syncBtn');
         if (syncBtn) {
-            syncBtn.addEventListener('click', () => {
-                this.store.loadCharacters();
-                this.renderHome();
-                this.showToast('Data reloaded');
+            syncBtn.addEventListener('click', async () => {
+                syncBtn.disabled = true;
+                const originalText = syncBtn.textContent;
+                syncBtn.textContent = 'Syncing... 🔄';
+                
+                const success = await this.store.syncWithKV();
+                
+                syncBtn.disabled = false;
+                syncBtn.textContent = originalText;
+                
+                if (success) {
+                    this.renderHome();
+                    if (!this.screens.gallery.classList.contains('hidden')) {
+                        this.renderGallery();
+                    }
+                    this.showToast('Data synchronized with KV database');
+                } else {
+                    this.showToast('Sync failed. Using local storage.', 'error');
+                }
             });
         }
 

@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "psgame",
+  "compatibility_date": "2025-02-04",
+  "pages_build_output_dir": ".",
+  "observability": {
+    "enabled": true
+  },
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "53c9ab89f200495fa2541882c65482e1"
+    }
+  ]
+}
