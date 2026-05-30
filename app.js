@@ -4,6 +4,12 @@
 
 const CATEGORIES = ['Slut', 'Twink', 'Shemale'];
 
+const GameMode = {
+    NORMAL: "normal",
+    PRACTICE: "practice",
+    STARRED: "starred"
+};
+
 // --- Helpers ---
 function getProxiedUrl(url) {
     if (!url) return '';
@@ -32,6 +38,7 @@ class DataStore {
         };
         this.customLabels = JSON.parse(localStorage.getItem('charquiz_custom_labels')) || ['milf', 'teen', 'legend'];
         this.STORAGE_KEY = 'charquiz_characters';
+        this.persistentMistakes = JSON.parse(localStorage.getItem('charquiz_persistent_mistakes')) || [];
     }
 
     saveLabels() {
@@ -121,21 +128,23 @@ class DataStore {
         return this.characters.filter(c => c.category === category);
     }
 
-    addCharacter(name, category, photoUrl, labels = []) {
+    addCharacter(name, category, photoUrl, labels = [], starred = false) {
         // --- Bug #8 Fix: guard against duplicate names ---
         const normalizedName = name.trim().toLowerCase();
         if (this.characters.some(c => c.name.toLowerCase() === normalizedName)) {
             throw new Error(`"${name.trim()}" already exists in your collection.`);
         }
         const id = 'char-' + name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        const newChar = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels };
+        const newChar = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels, starred };
         this.characters.push(newChar);
         this.saveCharacters();
         return newChar;
     }
 
-    updateCharacter(id, name, category, photoUrl, labels = []) {
-        const updated = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels };
+    updateCharacter(id, name, category, photoUrl, labels = [], starred = false) {
+        const existing = this.characters.find(c => c.id === id);
+        const isStarred = existing ? !!existing.starred : starred;
+        const updated = { id, name: name.trim(), category, photoUrl: photoUrl.trim(), labels, starred: isStarred };
         const index = this.characters.findIndex(c => c.id === id);
         if (index !== -1) {
             this.characters[index] = updated;
@@ -196,7 +205,8 @@ class DataStore {
                                 name: char.name.trim(),
                                 category: char.category,
                                 photoUrl: char.photoUrl.trim(),
-                                labels: Array.isArray(char.labels) ? char.labels : []
+                                labels: Array.isArray(char.labels) ? char.labels : [],
+                                starred: !!char.starred
                             });
                             added++;
                         }
@@ -226,7 +236,13 @@ class DataStore {
 
             if (Array.isArray(kvChars)) {
                 kvChars.forEach(c => {
-                    if (c && c.name) mergedMap.set(c.name.toLowerCase().trim(), c);
+                    if (c && c.name) {
+                        const existing = mergedMap.get(c.name.toLowerCase().trim());
+                        if (existing) {
+                            c.starred = c.starred || existing.starred;
+                        }
+                        mergedMap.set(c.name.toLowerCase().trim(), c);
+                    }
                 });
             }
 
@@ -246,6 +262,46 @@ class DataStore {
             console.error('KV Sync failed:', err);
             return false;
         }
+    }
+
+    toggleStarCharacter(id) {
+        const char = this.characters.find(c => c.id === id);
+        if (char) {
+            char.starred = !char.starred;
+            this.saveCharacters();
+            return char;
+        }
+        return null;
+    }
+
+    savePersistentMistakes() {
+        localStorage.setItem('charquiz_persistent_mistakes', JSON.stringify(this.persistentMistakes));
+    }
+
+    addPersistentMistake(charId) {
+        if (!this.persistentMistakes.some(m => m.id === charId)) {
+            this.persistentMistakes.push({ id: charId, masteryStreak: 0 });
+            this.savePersistentMistakes();
+        }
+    }
+
+    updatePersistentMistakeStreak(charId, isCorrect) {
+        const idx = this.persistentMistakes.findIndex(m => m.id === charId);
+        if (idx !== -1) {
+            const mistake = this.persistentMistakes[idx];
+            if (isCorrect) {
+                mistake.masteryStreak++;
+                if (mistake.masteryStreak >= 5) {
+                    this.persistentMistakes.splice(idx, 1);
+                    this.savePersistentMistakes();
+                    return true; // Cleared
+                }
+            } else {
+                mistake.masteryStreak = 0;
+            }
+            this.savePersistentMistakes();
+        }
+        return false; // Not cleared
     }
 
     async syncLabelsWithKV() {
@@ -366,31 +422,72 @@ class GameEngine {
             streak: 0,
             maxStreak: 0,
             mistakes: [],
-            availablePool: [], // characters remaining to be correct answers
+            availablePool: [], // characters remaining to be correct answers in normal mode
             fullPool: [], // all characters in category for options
             currentQuestion: null,
-            isActive: false
+            isActive: false,
+            mode: GameMode.NORMAL,
+            practicePool: [], // array of { character, masteryStreak }
+            totalPracticeMistakes: 0,
+            practiceAttempts: 0,
+            currentPracticeItem: null
         };
     }
 
-    start(category, roundsStr) {
+    start(category, roundsStr, mode = GameMode.NORMAL) {
         this.reset();
+        this.state.mode = mode;
         this.state.category = category;
-        this.state.fullPool = this.store.getCharacters(category);
-        this.state.availablePool = [...this.state.fullPool];
-        
-        if (this.state.fullPool.length < 3) {
-            this.ui.showToast('Not enough characters in this category. Minimum 3 required.', 'error');
-            return false;
+
+        if (mode === GameMode.STARRED) {
+            this.state.fullPool = this.store.getCharacters(category).filter(c => c.starred);
+            this.state.availablePool = [...this.state.fullPool];
+            
+            if (this.state.fullPool.length < 3) {
+                this.ui.showStarredEmptyState();
+                return false;
+            }
+        } else if (mode === GameMode.PRACTICE) {
+            const resolvedPool = [];
+            const allChars = this.store.getCharacters();
+            
+            this.store.persistentMistakes.forEach(pm => {
+                const char = allChars.find(c => c.id === pm.id);
+                if (char) {
+                    resolvedPool.push({
+                        character: char,
+                        masteryStreak: pm.masteryStreak
+                    });
+                }
+            });
+
+            if (resolvedPool.length === 0) {
+                this.ui.showToast('No persistent mistakes to practice!', 'error');
+                return false;
+            }
+
+            this.state.practicePool = resolvedPool;
+            this.state.totalPracticeMistakes = resolvedPool.length;
+            this.state.maxRounds = Infinity;
+            this.state.fullPool = allChars; // Full collection for choosing wrong options
+        } else {
+            this.state.fullPool = this.store.getCharacters(category);
+            this.state.availablePool = [...this.state.fullPool];
+            
+            if (this.state.fullPool.length < 3) {
+                this.ui.showToast('Not enough characters in this category. Minimum 3 required.', 'error');
+                return false;
+            }
         }
 
-        // Shuffle pool
-        this.state.availablePool.sort(() => Math.random() - 0.5);
-        
-        if (roundsStr === 'Infinite') {
-            this.state.maxRounds = Infinity;
-        } else {
-            this.state.maxRounds = parseInt(roundsStr);
+        // Shuffle pools if not in practice mode
+        if (mode !== GameMode.PRACTICE) {
+            this.state.availablePool.sort(() => Math.random() - 0.5);
+            if (roundsStr === 'Infinite') {
+                this.state.maxRounds = Infinity;
+            } else {
+                this.state.maxRounds = parseInt(roundsStr);
+            }
         }
 
         this.state.isActive = true;
@@ -401,66 +498,130 @@ class GameEngine {
 
     nextRound() {
         if (!this.state.isActive) return;
-        
-        if (this.state.currentRound >= this.state.maxRounds) {
-            this.endGame();
-            return;
+
+        // Hide attempts hint at the start of each round
+        this.ui.hideAttemptsHint();
+
+        if (this.state.mode === GameMode.PRACTICE) {
+            if (this.state.practicePool.length === 0) {
+                this.endGame();
+                return;
+            }
+
+            this.state.currentRound++;
+
+            // Pick a random mistake performer to practice
+            const correctItem = this.state.practicePool[Math.floor(Math.random() * this.state.practicePool.length)];
+            const correctChar = correctItem.character;
+
+            // Pick 2 wrong options from the entire characters list (excluding the correct one)
+            const wrongOptions = this.state.fullPool
+                .filter(c => c.id !== correctChar.id)
+                .sort(() => Math.random() - 0.5)
+                .slice(0, 2);
+
+            const options = [correctChar, ...wrongOptions].sort(() => Math.random() - 0.5);
+
+            this.state.currentQuestion = {
+                correct: correctChar,
+                options: options
+            };
+            this.state.currentPracticeItem = correctItem;
+            this.state.practiceAttempts = 0;
+
+            this.ui.renderGameRound(this.state);
+        } else {
+            if (this.state.currentRound >= this.state.maxRounds) {
+                this.endGame();
+                return;
+            }
+
+            this.state.currentRound++;
+
+            // Refill pool if empty to allow rounds > characters
+            if (this.state.availablePool.length === 0) {
+                this.state.availablePool = [...this.state.fullPool].sort(() => Math.random() - 0.5);
+            }
+
+            // Pick correct answer
+            const correctChar = this.state.availablePool.pop();
+
+            // Pick 2 wrong options
+            const wrongOptions = this.state.fullPool
+                .filter(c => c.id !== correctChar.id)
+                .sort(() => Math.random() - 0.5)
+                .slice(0, 2);
+
+            const options = [correctChar, ...wrongOptions].sort(() => Math.random() - 0.5);
+
+            this.state.currentQuestion = {
+                correct: correctChar,
+                options: options
+            };
+
+            this.ui.renderGameRound(this.state);
         }
-
-        this.state.currentRound++;
-        
-        // Refill pool if empty to allow rounds > characters
-        if (this.state.availablePool.length === 0) {
-            this.state.availablePool = [...this.state.fullPool].sort(() => Math.random() - 0.5);
-        }
-
-        // Pick correct answer
-        const correctChar = this.state.availablePool.pop();
-        
-        // Pick 2 wrong options
-        const wrongOptions = this.state.fullPool
-            .filter(c => c.id !== correctChar.id)
-            .sort(() => Math.random() - 0.5)
-            .slice(0, 2);
-            
-        const options = [correctChar, ...wrongOptions].sort(() => Math.random() - 0.5);
-        
-        this.state.currentQuestion = {
-            correct: correctChar,
-            options: options
-        };
-
-        this.ui.renderGameRound(this.state);
     }
 
     handleAnswer(selectedId) {
         if (!this.state.isActive || !this.state.currentQuestion) return;
-        
+
         const isCorrect = selectedId === this.state.currentQuestion.correct.id;
         const selectedChar = this.state.currentQuestion.options.find(o => o.id === selectedId);
-        
-        if (isCorrect) {
-            this.state.score += 100 + (this.state.streak * 10);
-            this.state.streak++;
-            if (this.state.streak > this.state.maxStreak) {
-                this.state.maxStreak = this.state.streak;
+
+        if (this.state.mode === GameMode.PRACTICE) {
+            // Update DataStore persistent mistakes streak
+            const isCleared = this.store.updatePersistentMistakeStreak(this.state.currentQuestion.correct.id, isCorrect);
+
+            if (isCorrect) {
+                this.state.currentPracticeItem.masteryStreak++;
+                this.state.score += 100 + (this.state.streak * 10);
+                this.state.streak++;
+                if (this.state.streak > this.state.maxStreak) {
+                    this.state.maxStreak = this.state.streak;
+                }
+
+                if (isCleared || this.state.currentPracticeItem.masteryStreak >= 5) {
+                    // Remove from active practice pool
+                    this.state.practicePool = this.state.practicePool.filter(item => item.character.id !== this.state.currentQuestion.correct.id);
+                    this.ui.showToast(`Mastered ${this.state.currentQuestion.correct.name}! 🎓`);
+                }
+            } else {
+                this.state.streak = 0;
+                this.state.currentPracticeItem.masteryStreak = 0;
+                this.state.practiceAttempts++;
+                if (this.state.practiceAttempts >= 3) {
+                    // Show custom hint/tip in UI
+                    this.ui.showAttemptsHint(this.state.currentQuestion.correct);
+                }
             }
         } else {
-            this.state.streak = 0;
-            const existingMistake = this.state.mistakes.find(m => m.correctId === this.state.currentQuestion.correct.id);
-            if (!existingMistake) {
-                this.state.mistakes.push({
-                    correctId: this.state.currentQuestion.correct.id,
-                    image: this.state.currentQuestion.correct.photoUrl,
-                    correctName: this.state.currentQuestion.correct.name,
-                    wrongName: selectedChar ? selectedChar.name : "Unknown"
-                });
+            if (isCorrect) {
+                this.state.score += 100 + (this.state.streak * 10);
+                this.state.streak++;
+                if (this.state.streak > this.state.maxStreak) {
+                    this.state.maxStreak = this.state.streak;
+                }
+            } else {
+                this.state.streak = 0;
+                // Add to persistent mistakes
+                this.store.addPersistentMistake(this.state.currentQuestion.correct.id);
+
+                const existingMistake = this.state.mistakes.find(m => m.correctId === this.state.currentQuestion.correct.id);
+                if (!existingMistake) {
+                    this.state.mistakes.push({
+                        correctId: this.state.currentQuestion.correct.id,
+                        image: this.state.currentQuestion.correct.photoUrl,
+                        correctName: this.state.currentQuestion.correct.name,
+                        wrongName: selectedChar ? selectedChar.name : "Unknown"
+                    });
+                }
             }
         }
 
         this.ui.updateGameStats(this.state);
         this.ui.showAnswerFeedback(selectedId, this.state.currentQuestion.correct.id);
-        
+
         setTimeout(() => {
             if (isCorrect) {
                 this.ui.playVideoReward(this.state.currentQuestion.correct.name, () => {
@@ -474,12 +635,19 @@ class GameEngine {
 
     endGame() {
         this.state.isActive = false;
-        const result = this.store.updateHighScore(this.state.category, this.state.score, this.state.maxStreak);
-        this.ui.renderResults(this.state, result);
-        this.ui.navigate('results');
-        
-        if (result.isNewHigh && this.state.score > 0) {
+
+        if (this.state.mode === GameMode.PRACTICE) {
+            this.ui.renderPracticeCompletion(this.state.totalPracticeMistakes);
+            this.ui.navigate('practice-complete');
             Confetti.fire();
+        } else {
+            const result = this.store.updateHighScore(this.state.category, this.state.score, this.state.maxStreak);
+            this.ui.renderResults(this.state, result);
+            this.ui.navigate('results');
+
+            if (result.isNewHigh && this.state.score > 0) {
+                Confetti.fire();
+            }
         }
     }
 }
@@ -567,7 +735,8 @@ class App {
             gallery: document.getElementById('screen-gallery'),
             config: document.getElementById('screen-config'),
             game: document.getElementById('screen-game'),
-            results: document.getElementById('screen-results')
+            results: document.getElementById('screen-results'),
+            'practice-complete': document.getElementById('screen-practice-complete')
         };
         
         // Modals
@@ -577,7 +746,8 @@ class App {
             image: document.getElementById('imageModal'),
             random: document.getElementById('randomModal'),
             labelsManager: document.getElementById('labelsManagerModal'),
-            rewardVideo: document.getElementById('rewardVideoModal')
+            rewardVideo: document.getElementById('rewardVideoModal'),
+            starredEmpty: document.getElementById('starredEmptyModal')
         };
         
         this.toastContainer = document.getElementById('toastContainer');
@@ -751,7 +921,6 @@ class App {
         document.getElementById('addCharacterForm').addEventListener('submit', (e) => this.handleAddCharacter(e));
         document.getElementById('editCharacterForm').addEventListener('submit', (e) => this.handleEditCharacter(e));
         document.getElementById('exportDataBtn').addEventListener('click', () => this.store.exportData());
-        document.getElementById('importDataInput').addEventListener('change', (e) => this.handleImportData(e));
         document.getElementById('clearAllDataBtn').addEventListener('click', () => this.handleClearAllData());
 
         // Home Screen
@@ -759,7 +928,11 @@ class App {
             const card = e.target.closest('.category-card');
             if (card) {
                 const category = card.dataset.category;
-                this.openGameConfig(category);
+                if (category === 'Practice') {
+                    this.game.start('Practice', 'Infinite', GameMode.PRACTICE);
+                } else {
+                    this.openGameConfig(category);
+                }
             }
         });
 
@@ -789,7 +962,8 @@ class App {
         document.getElementById('startGameBtn').addEventListener('click', () => {
             const roundsStr = document.querySelector('input[name="rounds"]:checked').value;
             const cat = document.getElementById('configCategoryTitle').dataset.category;
-            this.game.start(cat, roundsStr);
+            const mode = cat === 'Starred' ? GameMode.STARRED : GameMode.NORMAL;
+            this.game.start(cat, roundsStr, mode);
         });
         document.getElementById('backFromConfigBtn').addEventListener('click', () => {
             this.navigate('home');
@@ -811,7 +985,44 @@ class App {
              }
         });
 
+        const gameStarBtn = document.getElementById('gameStarBtn');
+        if (gameStarBtn) {
+            gameStarBtn.addEventListener('click', (e) => {
+                if (this.game.state.isActive && this.game.state.currentQuestion) {
+                    this.handleToggleStar(this.game.state.currentQuestion.correct.id, e);
+                }
+            });
+        }
+
         document.getElementById('playAgainBtn').addEventListener('click', () => this.navigate('home'));
+        
+        document.getElementById('practiceMistakesBtn').addEventListener('click', () => {
+            this.game.start('Practice', 'Infinite', GameMode.PRACTICE);
+        });
+
+        document.getElementById('practiceBackHomeBtn').addEventListener('click', () => {
+            this.navigate('home');
+        });
+        document.getElementById('practicePlayAgainBtn').addEventListener('click', () => {
+            this.navigate('home');
+        });
+
+        // Starred Empty State Modal
+        document.getElementById('goToGalleryBtn').addEventListener('click', () => {
+            this.closeModal('starredEmpty');
+            this.galleryFilter = 'Starred';
+            document.querySelectorAll('#galleryFilters .pill').forEach(p => {
+                if (p.dataset.filter === 'Starred') p.classList.add('active');
+                else p.classList.remove('active');
+            });
+            this.navigate('gallery');
+        });
+        document.getElementById('closeStarredEmptyBtn').addEventListener('click', () => {
+            this.closeModal('starredEmpty');
+        });
+        document.getElementById('starredEmptyModalBackdrop').addEventListener('click', () => {
+            this.closeModal('starredEmpty');
+        });
     }
 
     applyTheme(theme) {
@@ -905,6 +1116,53 @@ class App {
             `;
             grid.appendChild(card);
         });
+
+        // Starred Mode Card
+        const starredChars = this.store.getCharacters().filter(c => c.starred);
+        const starredCount = starredChars.length;
+        let starredBgUrl = '';
+        if (starredCount > 0) {
+            starredBgUrl = getProxiedUrl(starredChars[Math.floor(Math.random() * starredCount)].photoUrl);
+        } else {
+            starredBgUrl = 'https://via.placeholder.com/300x400/222/555?text=Starred';
+        }
+        const starredCard = document.createElement('div');
+        starredCard.className = 'category-card';
+        starredCard.dataset.category = 'Starred';
+        starredCard.innerHTML = `
+            <div class="card-bg" style="background-image: url('${starredBgUrl}')"></div>
+            <div class="card-overlay">
+                <h3>⭐ Starred Mode</h3>
+                <span class="count">${starredCount} Starred Performers</span>
+            </div>
+        `;
+        grid.appendChild(starredCard);
+
+        // Practice Mistakes Card
+        const mistakesCount = this.store.persistentMistakes.length;
+        if (mistakesCount > 0) {
+            let mistakesBgUrl = '';
+            const allChars = this.store.getCharacters();
+            const resolvedMistakes = this.store.persistentMistakes
+                .map(pm => allChars.find(c => c.id === pm.id))
+                .filter(Boolean);
+            if (resolvedMistakes.length > 0) {
+                mistakesBgUrl = getProxiedUrl(resolvedMistakes[Math.floor(Math.random() * resolvedMistakes.length)].photoUrl);
+            } else {
+                mistakesBgUrl = 'https://via.placeholder.com/300x400/222/555?text=Mistakes';
+            }
+            const mistakesCard = document.createElement('div');
+            mistakesCard.className = 'category-card practice-card';
+            mistakesCard.dataset.category = 'Practice';
+            mistakesCard.innerHTML = `
+                <div class="card-bg" style="background-image: url('${mistakesBgUrl}')"></div>
+                <div class="card-overlay">
+                    <h3 style="color: #fbbf24;">⚡ Practice Mistakes</h3>
+                    <span class="count" style="color: #fbbf24; font-weight: 600;">${mistakesCount} performers need review</span>
+                </div>
+            `;
+            grid.appendChild(mistakesCard);
+        }
     }
 
     renderGallery() {
@@ -932,7 +1190,10 @@ class App {
         filterContainer.style.display = sortedLabels.length > 0 ? 'flex' : 'none';
 
         // Filter Characters
-        const chars = this.store.getCharacters(this.galleryFilter).filter(c => {
+        const chars = (this.galleryFilter === 'Starred' ?
+            this.store.getCharacters().filter(c => c.starred) :
+            this.store.getCharacters(this.galleryFilter)
+        ).filter(c => {
             const matchesSearch = c.name.toLowerCase().includes(this.gallerySearch);
             const matchesLabel = this.labelsFilter === 'All' || (Array.isArray(c.labels) && c.labels.includes(this.labelsFilter));
             return matchesSearch && matchesLabel;
@@ -951,6 +1212,7 @@ class App {
                 <div class="char-item-actions">
                     <button class="char-action-btn edit" onclick="app.openEditModal('${c.id}', event)" title="Edit">✏️</button>
                     <button class="char-action-btn delete" onclick="app.handleDeleteCharacter('${c.id}', event)" title="Delete">🗑️</button>
+                    <button class="char-action-btn star ${c.starred ? 'starred' : ''}" onclick="app.handleToggleStar('${c.id}', event)" title="Star / Keep Performer">★</button>
                     <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(c.name + ' porn video')}" target="_blank" class="char-action-btn search" title="Search Video" onclick="event.stopPropagation()" style="text-decoration:none; display:flex; align-items:center; justify-content:center; background: rgba(59, 130, 246, 0.8);">🎬</a>
                 </div>
                 <div class="char-item-info">
@@ -980,9 +1242,16 @@ class App {
     }
 
     openGameConfig(category) {
-        const chars = this.store.getCharacters(category);
+        const chars = category === 'Starred' ? 
+            this.store.getCharacters().filter(c => c.starred) :
+            this.store.getCharacters(category);
+
         if (chars.length < 3) {
-            this.showToast(`Need at least 3 characters in ${category} to play. Currently have ${chars.length}.`, 'error');
+            if (category === 'Starred') {
+                this.showStarredEmptyState();
+            } else {
+                this.showToast(`Need at least 3 characters in ${category} to play. Currently have ${chars.length}.`, 'error');
+            }
             return;
         }
         
@@ -1010,19 +1279,48 @@ class App {
     }
 
     renderGameRound(state) {
-        document.getElementById('currentRound').textContent = state.maxRounds === Infinity ? 
-            state.currentRound : `${state.currentRound} / ${state.maxRounds}`;
-        document.getElementById('currentStreak').textContent = state.streak;
-        
-        let progress = 0;
-        if (state.maxRounds !== Infinity) {
-            progress = ((state.currentRound - 1) / state.maxRounds) * 100;
+        const progressTextEl = document.getElementById('gameProgressText');
+        const streakContainer = document.getElementById('gameStreakContainer');
+        const roundEl = document.getElementById('currentRound');
+
+        if (state.mode === GameMode.PRACTICE) {
+            const cleared = state.totalPracticeMistakes - state.practicePool.length;
+            progressTextEl.innerHTML = `Mistakes Cleared: <span id="currentRound">${cleared} / ${state.totalPracticeMistakes}</span>`;
+            
+            // Show current performer mastery streak
+            const currentPerformerStreak = state.currentPracticeItem.masteryStreak;
+            streakContainer.innerHTML = `Mastery Streak <span id="currentStreak" style="color: #fbbf24;">${currentPerformerStreak} / 5</span>`;
+            
+            const progress = (cleared / state.totalPracticeMistakes) * 100;
+            document.getElementById('gameProgressFill').style.width = `${progress}%`;
+            document.getElementById('gameProgressFill').style.background = 'linear-gradient(135deg, #f59e0b, #ef4444)';
+        } else {
+            progressTextEl.innerHTML = `Round <span id="currentRound">${state.currentRound}</span>`;
+            roundEl.textContent = state.maxRounds === Infinity ? 
+                state.currentRound : `${state.currentRound} / ${state.maxRounds}`;
+            streakContainer.innerHTML = `Streak <span id="currentStreak">${state.streak}</span>`;
+            
+            let progress = 0;
+            if (state.maxRounds !== Infinity) {
+                progress = ((state.currentRound - 1) / state.maxRounds) * 100;
+            }
+            document.getElementById('gameProgressFill').style.width = `${progress}%`;
+            document.getElementById('gameProgressFill').style.background = 'var(--gradient-primary)';
         }
-        document.getElementById('gameProgressFill').style.width = `${progress}%`;
         
         const img = document.getElementById('gameImage');
         img.src = getProxiedUrl(state.currentQuestion.correct.photoUrl);
         
+        // Star button state
+        const gameStarBtn = document.getElementById('gameStarBtn');
+        if (gameStarBtn) {
+            if (state.currentQuestion.correct.starred) {
+                gameStarBtn.classList.add('starred');
+            } else {
+                gameStarBtn.classList.remove('starred');
+            }
+        }
+
         const searchBtn = document.getElementById('gameSearchVideoBtn');
         if (searchBtn) {
             searchBtn.href = `https://www.google.com/search?tbm=vid&q=${encodeURIComponent(state.currentQuestion.correct.name + ' porn video')}`;
@@ -1042,13 +1340,23 @@ class App {
     }
 
     updateGameStats(state) {
-        document.getElementById('currentStreak').textContent = state.streak;
-        
-        let progress = 0;
-        if (state.maxRounds !== Infinity) {
-            progress = (state.currentRound / state.maxRounds) * 100;
+        const streakContainer = document.getElementById('gameStreakContainer');
+        if (state.mode === GameMode.PRACTICE) {
+            const cleared = state.totalPracticeMistakes - state.practicePool.length;
+            const progress = (cleared / state.totalPracticeMistakes) * 100;
+            document.getElementById('gameProgressFill').style.width = `${progress}%`;
+            
+            const currentPerformerStreak = state.currentPracticeItem.masteryStreak;
+            streakContainer.innerHTML = `Mastery Streak <span id="currentStreak" style="color: #fbbf24;">${currentPerformerStreak} / 5</span>`;
+        } else {
+            document.getElementById('currentStreak').textContent = state.streak;
+            
+            let progress = 0;
+            if (state.maxRounds !== Infinity) {
+                progress = (state.currentRound / state.maxRounds) * 100;
+            }
+            document.getElementById('gameProgressFill').style.width = `${progress}%`;
         }
-        document.getElementById('gameProgressFill').style.width = `${progress}%`;
     }
 
     showAnswerFeedback(selectedId, correctId) {
@@ -1069,6 +1377,16 @@ class App {
         const label = resultInfo.isNewHigh ? '🏆 New' : 'All-Time';
         document.querySelector('.metric.highlight span').innerHTML = `${label} High Score`;
 
+        // Show/hide Practice Mistakes button
+        const practiceBtn = document.getElementById('practiceMistakesBtn');
+        if (practiceBtn) {
+            if (this.store.persistentMistakes.length > 0) {
+                practiceBtn.classList.remove('hidden');
+            } else {
+                practiceBtn.classList.add('hidden');
+            }
+        }
+
         const mistakesList = document.getElementById('mistakesList');
         mistakesList.innerHTML = '';
         
@@ -1076,11 +1394,14 @@ class App {
             mistakesList.innerHTML = '<p style="color:var(--success)">Perfect game! No mistakes to review.</p>';
         } else {
             state.mistakes.forEach(m => {
+                const char = this.store.getCharacters().find(c => c.id === m.correctId);
+                const isStarred = char && char.starred;
                 const item = document.createElement('div');
                 item.className = 'mistake-item';
                 item.innerHTML = `
                     <div class="mistake-img-container" style="position:relative;">
                         <a href="https://www.google.com/search?tbm=vid&q=${encodeURIComponent(m.correctName + ' porn video')}" target="_blank" class="char-action-btn" title="Search Video" style="position:absolute; top:0.5rem; right:0.5rem; text-decoration:none; display:flex; align-items:center; justify-content:center; background: rgba(59, 130, 246, 0.8); z-index:10;">🎬</a>
+                        <button class="char-action-btn star ${isStarred ? 'starred' : ''}" style="position:absolute; top:0.5rem; left:0.5rem; z-index:10;" onclick="app.handleToggleStar('${m.correctId}', event)" title="Star / Keep Performer">★</button>
                         <img src="${getProxiedUrl(m.image)}" alt="Character">
                     </div>
                     <div class="mistake-info">
@@ -1090,6 +1411,60 @@ class App {
                 `;
                 mistakesList.appendChild(item);
             });
+        }
+    }
+
+    showStarredEmptyState() {
+        const modal = document.getElementById('starredEmptyModal');
+        if (modal) {
+            modal.classList.remove('hidden');
+        }
+    }
+
+    renderPracticeCompletion(totalCleared) {
+        document.getElementById('practiceClearedCount').textContent = totalCleared;
+    }
+
+    handleToggleStar(id, e) {
+        if (e) e.stopPropagation();
+        const char = this.store.toggleStarCharacter(id);
+        if (char) {
+            const isStarred = char.starred;
+            this.showToast(isStarred ? `⭐ Starred ${char.name}` : `☆ Unstarred ${char.name}`);
+            
+            // Sync UI elements dynamically
+            if (!this.screens.gallery.classList.contains('hidden')) {
+                this.renderGallery();
+            }
+            if (!this.screens.home.classList.contains('hidden')) {
+                this.renderHome();
+            }
+            const gameStarBtn = document.getElementById('gameStarBtn');
+            if (gameStarBtn && this.game.state.isActive && this.game.state.currentQuestion && this.game.state.currentQuestion.correct.id === id) {
+                if (isStarred) gameStarBtn.classList.add('starred');
+                else gameStarBtn.classList.remove('starred');
+            }
+            if (e && e.currentTarget && e.currentTarget.classList.contains('star')) {
+                if (isStarred) e.currentTarget.classList.add('starred');
+                else e.currentTarget.classList.remove('starred');
+            }
+        }
+    }
+
+    showAttemptsHint(performer) {
+        const hintEl = document.getElementById('gameAttemptsHint');
+        if (hintEl) {
+            const firstLetter = performer.name.charAt(0).toUpperCase();
+            hintEl.textContent = `💡 Hint: Category is "${performer.category}". Name starts with "${firstLetter}".`;
+            hintEl.classList.remove('hidden');
+        }
+    }
+
+    hideAttemptsHint() {
+        const hintEl = document.getElementById('gameAttemptsHint');
+        if (hintEl) {
+            hintEl.classList.add('hidden');
+            hintEl.textContent = '';
         }
     }
 

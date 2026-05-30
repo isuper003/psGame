@@ -42,6 +42,7 @@
                     <button class="pill" data-filter="Slut">Slut</button>
                     <button class="pill" data-filter="Twink">Twink</button>
                     <button class="pill" data-filter="Shemale">Shemale</button>
+                    <button class="pill" data-filter="Starred">Starred ⭐</button>
                 </div>
                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                     <button class="btn-secondary" id="manageLabelsBtn">Manage Labels</button>
@@ -80,15 +81,18 @@
             <div class="game-topbar">
                 <div class="progress-bar"><div id="gameProgressFill"></div></div>
                 <div class="stats">
-                    <span class="stat-round">Round <span id="currentRound">1</span></span>
-                    <span class="stat-streak">Streak <span id="currentStreak">0</span></span>
+                    <span class="stat-round" id="gameProgressText">Round <span id="currentRound">1</span></span>
+                    <span class="stat-streak" id="gameStreakContainer">Streak <span id="currentStreak">0</span></span>
                     <button class="btn-secondary" id="endGameBtn" style="padding: 0.25rem 0.75rem; font-size: 0.85rem; border-color: var(--danger); color: var(--danger);">End Game</button>
                 </div>
             </div>
             <div class="game-area">
                 <div class="image-frame glass-card" style="position:relative;">
                     <a id="gameSearchVideoBtn" href="#" target="_blank" class="char-action-btn hidden" title="Search Video" style="position:absolute; top:0.5rem; right:0.5rem; text-decoration:none; display:flex; align-items:center; justify-content:center; background: rgba(59, 130, 246, 0.8); z-index:10;">🎬</a>
+                    <button id="gameStarBtn" class="star-btn" title="Star / Keep Performer">★</button>
                     <img id="gameImage" src="" alt="Character">
+                    <!-- Attempts Assist Tooltip/Hint inside game area -->
+                    <div id="gameAttemptsHint" class="game-hint hidden"></div>
                 </div>
                 <div class="options-grid" id="gameOptions"></div>
             </div>
@@ -107,7 +111,30 @@
                     <h3>Review Mistakes</h3>
                     <div id="mistakesList"></div>
                 </div>
-                <button class="btn-primary" id="playAgainBtn">Play Again</button>
+                <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 1.5rem; flex-wrap: wrap;">
+                    <button class="btn-secondary" id="playAgainBtn" style="flex: 1; min-width: 150px;">Play Again</button>
+                    <button class="btn-primary hidden" id="practiceMistakesBtn" style="flex: 1; min-width: 150px; background: linear-gradient(135deg, #f59e0b, #ef4444);">Practice Mistakes</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Practice Completion Screen -->
+        <section id="screen-practice-complete" class="screen hidden">
+            <div class="results-card glass-card">
+                <h2 style="color: var(--success); font-size: 2.2rem; margin-bottom: 1rem;">🏆 Practice Complete!</h2>
+                <div class="metrics" style="justify-content: center;">
+                    <div class="metric" style="padding: 1.5rem 3rem;">
+                        <span>Performers Mastered</span>
+                        <strong id="practiceClearedCount" style="font-size: 2.5rem; color: var(--success);">0</strong>
+                    </div>
+                </div>
+                <p style="margin-bottom: 2rem; color: var(--text-muted); font-size: 1.1rem; max-width: 400px; margin-left: auto; margin-right: auto;">
+                    Fantastic! You have successfully answered all mistake performers correctly 5 consecutive times and cleared them from your practice list.
+                </p>
+                <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+                    <button class="btn-secondary" id="practiceBackHomeBtn" style="padding: 0.75rem 2rem;">Back Home</button>
+                    <button class="btn-primary" id="practicePlayAgainBtn" style="padding: 0.75rem 2rem;">Play Normal Mode</button>
+                </div>
             </div>
         </section>
     </main>
@@ -401,6 +428,22 @@
     <div id="toastContainer" class="toast-container"></div>
     <!-- Confetti Canvas -->
     <canvas id="confettiCanvas" class="hidden"></canvas>
+
+    <!-- Starred Empty State Modal -->
+    <div id="starredEmptyModal" class="modal hidden">
+        <div class="modal-backdrop" id="starredEmptyModalBackdrop"></div>
+        <div class="modal-content glass-card" style="text-align: center; max-width: 400px; padding: 2.5rem 2rem; border-radius: var(--border-radius);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">⭐</div>
+            <h2 style="margin-bottom: 1rem; color: var(--primary);">No Starred Performers</h2>
+            <p style="color: var(--text-muted); margin-bottom: 2rem; font-size: 0.95rem; line-height: 1.5;">
+                You haven't starred any performers yet! To play in Starred Mode, first star some characters in the gallery or during gameplay.
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                <button class="btn-primary w-full" id="goToGalleryBtn">Go to Gallery</button>
+                <button class="btn-secondary w-full" id="closeStarredEmptyBtn">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Dummy Characters JSON -->
     <!-- <script id="dummy-characters" type="application/json">

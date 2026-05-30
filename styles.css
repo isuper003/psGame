@@ -950,3 +950,82 @@ input:focus, select:focus {
     to { transform: rotate(360deg); }
 }
 
+/* =================== PRACTICE MODE & STARRING STYLES =================== */
+.image-frame .star-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 3rem; /* Placed next to search video button */
+    z-index: 15;
+    font-size: 1.5rem;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 50%;
+    border: 1px solid var(--border-glass);
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #94a3b8; /* muted color */
+    transition: all 0.2s ease;
+    outline: none;
+}
+.image-frame .star-btn:hover {
+    transform: scale(1.1);
+    background: rgba(0, 0, 0, 0.7);
+}
+.image-frame .star-btn.starred {
+    color: #fbbf24; /* gold star */
+    text-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
+}
+
+.char-action-btn.star.starred {
+    background: rgba(251, 191, 36, 0.2);
+    border-color: #fbbf24;
+    color: #fbbf24;
+}
+.char-action-btn.star.starred:hover {
+    background: rgba(251, 191, 36, 0.35);
+}
+
+.game-hint {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.95);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    padding: 0.75rem 1.25rem;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    z-index: 20;
+    max-width: 90%;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    animation: bounceIn 0.3s ease forwards;
+}
+
+@keyframes bounceIn {
+    0% { transform: translate(-50%, 20px) scale(0.9); opacity: 0; }
+    50% { transform: translate(-50%, -5px) scale(1.03); opacity: 0.8; }
+    100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+}
+
+.stat-round.practice-mode-indicator {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #fbbf24;
+}
+
+.category-card.practice-card {
+    border: 2px dashed rgba(239, 68, 68, 0.4);
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.05), rgba(245, 158, 11, 0.05));
+}
+.category-card.practice-card:hover {
+    border-color: var(--danger);
+    box-shadow: 0 8px 32px rgba(239, 68, 68, 0.2);
+}
+
+
