@@ -26,6 +26,34 @@ function cleanPerformerName(name) {
         .trim();
 }
 
+function isCharactersEqual(arr1, arr2) {
+    if (!arr1 || !arr2) return false;
+    if (arr1.length !== arr2.length) return false;
+    const map1 = new Map(arr1.map(c => [c.id, c]));
+    for (const c2 of arr2) {
+        const c1 = map1.get(c2.id);
+        if (!c1) return false;
+        if (c1.name !== c2.name ||
+            c1.category !== c2.category ||
+            c1.photoUrl !== c2.photoUrl ||
+            !!c1.starred !== !!c2.starred) {
+            return false;
+        }
+        const labels1 = c1.labels || [];
+        const labels2 = c2.labels || [];
+        if (labels1.length !== labels2.length) return false;
+        if (!labels1.every(l => labels2.includes(l))) return false;
+    }
+    return true;
+}
+
+function isLabelsEqual(arr1, arr2) {
+    if (!arr1 || !arr2) return false;
+    if (arr1.length !== arr2.length) return false;
+    const set1 = new Set(arr1);
+    return arr2.every(l => set1.has(l));
+}
+
 // --- Data Store ---
 class DataStore {
     constructor() {
@@ -222,45 +250,122 @@ class DataStore {
     }
 
     async syncWithKV() {
+        const syncMetrics = {
+            startTime: performance.now(),
+            getRequests: 0,
+            postRequests: 0,
+            skippedUploads: 0,
+            dataChanged: false
+        };
+
         try {
-            const res = await fetch('/api/characters');
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const kvChars = await res.json();
+            syncMetrics.getRequests += 2;
+            const [resChars, resLabels] = await Promise.all([
+                fetch('/api/characters'),
+                fetch('/api/labels')
+            ]);
 
+            if (!resChars.ok) throw new Error(`HTTP GET characters failed: ${resChars.status}`);
+            if (!resLabels.ok) throw new Error(`HTTP GET labels failed: ${resLabels.status}`);
+
+            const [kvChars, kvLabels] = await Promise.all([
+                resChars.json(),
+                resLabels.json()
+            ]);
+
+            // Merge Characters
             const localChars = this.characters;
-            const mergedMap = new Map();
-
+            const mergedCharsMap = new Map();
             localChars.forEach(c => {
-                if (c && c.name) mergedMap.set(c.name.toLowerCase().trim(), c);
+                if (c && c.name) mergedCharsMap.set(c.name.toLowerCase().trim(), c);
             });
 
             if (Array.isArray(kvChars)) {
                 kvChars.forEach(c => {
                     if (c && c.name) {
-                        const existing = mergedMap.get(c.name.toLowerCase().trim());
+                        const existing = mergedCharsMap.get(c.name.toLowerCase().trim());
                         if (existing) {
                             c.starred = c.starred || existing.starred;
                         }
-                        mergedMap.set(c.name.toLowerCase().trim(), c);
+                        mergedCharsMap.set(c.name.toLowerCase().trim(), c);
                     }
                 });
             }
+            const mergedChars = Array.from(mergedCharsMap.values());
 
-            const merged = Array.from(mergedMap.values());
-            this.characters = merged;
-            localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.characters));
+            // Merge Labels
+            const localLabels = this.customLabels;
+            const mergedLabelsSet = new Set([...localLabels, ...kvLabels]);
+            const mergedLabels = Array.from(mergedLabelsSet).filter(l => l && l.trim());
 
-            await fetch('/api/characters', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(merged)
+            // Compare datasets to determine changes
+            const charsLocalChanged = !isCharactersEqual(localChars, mergedChars);
+            const charsRemoteChanged = !isCharactersEqual(kvChars, mergedChars);
+
+            const labelsLocalChanged = !isLabelsEqual(localLabels, mergedLabels);
+            const labelsRemoteChanged = !isLabelsEqual(kvLabels, mergedLabels);
+
+            let localUpdated = false;
+            if (charsLocalChanged) {
+                this.characters = mergedChars;
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(mergedChars));
+                localUpdated = true;
+            }
+            if (labelsLocalChanged) {
+                this.customLabels = mergedLabels;
+                localStorage.setItem('charquiz_custom_labels', JSON.stringify(mergedLabels));
+                localUpdated = true;
+            }
+
+            syncMetrics.dataChanged = localUpdated;
+
+            // Prepare POST promises in parallel (eliminate waterfall)
+            const postPromises = [];
+            
+            if (charsRemoteChanged) {
+                syncMetrics.postRequests++;
+                postPromises.push(
+                    fetch('/api/characters', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(mergedChars)
+                    }).then(r => { if (!r.ok) throw new Error(`HTTP POST characters failed: ${r.status}`); })
+                );
+            } else {
+                syncMetrics.skippedUploads++;
+                console.log('[Performance] Characters upload skipped: KV already identical.');
+            }
+
+            if (labelsRemoteChanged) {
+                syncMetrics.postRequests++;
+                postPromises.push(
+                    fetch('/api/labels', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(mergedLabels)
+                    }).then(r => { if (!r.ok) throw new Error(`HTTP POST labels failed: ${r.status}`); })
+                );
+            } else {
+                syncMetrics.skippedUploads++;
+                console.log('[Performance] Labels upload skipped: KV already identical.');
+            }
+
+            if (postPromises.length > 0) {
+                await Promise.all(postPromises);
+            }
+
+            const duration = performance.now() - syncMetrics.startTime;
+            console.log(`[Performance] Sync completed in ${duration.toFixed(2)}ms. Metrics:`, {
+                getRequests: syncMetrics.getRequests,
+                postRequests: syncMetrics.postRequests,
+                skippedUploads: syncMetrics.skippedUploads,
+                dataChanged: syncMetrics.dataChanged
             });
 
-            await this.syncLabelsWithKV();
-            return true;
+            return { success: true, dataChanged: syncMetrics.dataChanged };
         } catch (err) {
-            console.error('KV Sync failed:', err);
-            return false;
+            console.error('[Performance] Sync failed:', err);
+            return { success: false, dataChanged: false };
         }
     }
 
@@ -305,26 +410,8 @@ class DataStore {
     }
 
     async syncLabelsWithKV() {
-        try {
-            const res = await fetch('/api/labels');
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const kvLabels = await res.json();
-
-            const localLabels = this.customLabels;
-            const mergedSet = new Set([...localLabels, ...kvLabels]);
-            const merged = Array.from(mergedSet).filter(l => l && l.trim());
-
-            this.customLabels = merged;
-            localStorage.setItem('charquiz_custom_labels', JSON.stringify(this.customLabels));
-
-            await fetch('/api/labels', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(merged)
-            });
-        } catch (err) {
-            console.error('KV Labels Sync failed:', err);
-        }
+        // Deprecated: Consolidated into syncWithKV for parallelization and optimization
+        return Promise.resolve();
     }
 }
 
@@ -714,18 +801,28 @@ class App {
     }
 
     async initData() {
+        const start = performance.now();
         this.store.loadCharacters();
         this.renderHome();
+        const loadTime = performance.now() - start;
+        console.log(`[Performance] Local data loaded and rendered in ${loadTime.toFixed(2)}ms`);
         
-        // Background sync on startup
-        const success = await this.store.syncWithKV();
-        if (success) {
-            this.renderHome();
-            if (!this.screens.gallery.classList.contains('hidden')) {
-                this.renderGallery();
+        // Non-blocking background sync on startup
+        this.store.syncWithKV().then(result => {
+            if (result && result.success) {
+                if (result.dataChanged) {
+                    console.log('[Performance] Background sync found changes. Re-rendering UI.');
+                    this.renderHome();
+                    if (!this.screens.gallery.classList.contains('hidden')) {
+                        this.renderGallery();
+                    }
+                } else {
+                    console.log('[Performance] Background sync completed. No changes detected, skipped re-render.');
+                }
+            } else {
+                console.warn('[Performance] Background sync failed or was incomplete.');
             }
-            console.log('KV Sync successful on startup.');
-        }
+        });
     }
 
     initDOM() {
@@ -807,15 +904,18 @@ class App {
                 const originalText = syncBtn.textContent;
                 syncBtn.textContent = 'Syncing... 🔄';
                 
-                const success = await this.store.syncWithKV();
+                const result = await this.store.syncWithKV();
+                const success = result && result.success;
                 
                 syncBtn.disabled = false;
                 syncBtn.textContent = originalText;
                 
                 if (success) {
-                    this.renderHome();
-                    if (!this.screens.gallery.classList.contains('hidden')) {
-                        this.renderGallery();
+                    if (result.dataChanged) {
+                        this.renderHome();
+                        if (!this.screens.gallery.classList.contains('hidden')) {
+                            this.renderGallery();
+                        }
                     }
                     this.showToast('Data synchronized with KV database');
                 } else {
